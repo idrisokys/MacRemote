@@ -54,6 +54,7 @@ func performMapping(_ m: Mapping) {
 
 // ---------- Kumanda dinleme (HID) ----------
 var onHID: ((String, Int, Int) -> Void)?
+var onDevice: ((String) -> Void)?
 var hidManager: IOHIDManager?
 var activeBox: KeyBox?
 
@@ -68,9 +69,15 @@ func startHID() -> IOReturn {
               IOHIDValueGetIntegerValue(value) == 1 else { return }
         let dev = IOHIDElementGetDevice(el)
         let vendor = IOHIDDeviceGetProperty(dev, kIOHIDVendorIDKey as CFString) as? Int ?? 0
-        if vendor == 0x05AC { return } // Apple (Mac klavyesi/trackpad) yok sayılır
+        if vendor == 0x05AC || vendor == 0x004C { return } // Apple cihazları yok sayılır
         let name = IOHIDDeviceGetProperty(dev, kIOHIDProductKey as CFString) as? String ?? "Bilinmeyen"
         onHID?(name, page, usage)
+    }, nil)
+    IOHIDManagerRegisterDeviceMatchingCallback(hid, { _, _, _, dev in
+        let vendor = IOHIDDeviceGetProperty(dev, kIOHIDVendorIDKey as CFString) as? Int ?? 0
+        if vendor == 0x05AC || vendor == 0x004C { return }
+        let name = IOHIDDeviceGetProperty(dev, kIOHIDProductKey as CFString) as? String ?? "Bilinmeyen"
+        onDevice?(name)
     }, nil)
     IOHIDManagerScheduleWithRunLoop(hid, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
     let r = IOHIDManagerOpen(hid, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -124,27 +131,66 @@ final class Row {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var win: NSWindow!
     let perm = NSTextField(wrappingLabelWithString: "")
-    let last = NSTextField(wrappingLabelWithString: "Son sinyal: (henüz yok)")
+    let last = NSTextField(wrappingLabelWithString: "Atama kapalı. Yalnızca atanmış tuşlar çalışır.")
     let list = NSStackView()
     var rows: [Row] = []
     var table: [String: Mapping] = [:]
+    var assigning = false
+    let assignBtn = NSButton(title: "▶︎ Atamayı başlat", target: nil, action: nil)
+    var statusItem: NSStatusItem!
+    var toggleItem: NSMenuItem!
+    let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+    var devices: [String] = []
+    var selected: String? = UserDefaults.standard.string(forKey: "device")
+
+    func addDevice(_ name: String) {
+        guard !devices.contains(name) else { return }
+        devices.append(name)
+        popup.addItem(withTitle: name)
+        if selected == nil && name.contains("Xiaomi") { selected = name; UserDefaults.standard.set(name, forKey: "device") }
+        if name == selected { popup.selectItem(withTitle: name) }
+        applyFilter()
+    }
+
+    @objc func deviceChanged() {
+        selected = popup.indexOfSelectedItem == 0 ? nil : popup.titleOfSelectedItem
+        UserDefaults.standard.set(selected, forKey: "device")
+        applyFilter()
+    }
+
+    func applyFilter() {
+        for r in rows { r.view.isHidden = (selected != nil && r.device != selected) }
+    }
+
+    @objc func clearEmpty() {
+        for r in rows where r.b1.code == nil && r.b2.code == nil {
+            list.removeArrangedSubview(r.view); r.view.removeFromSuperview()
+        }
+        rows.removeAll { $0.b1.code == nil && $0.b2.code == nil }
+    }
 
     func applicationDidFinishLaunching(_ n: Notification) {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         let ax = AXIsProcessTrustedWithOptions(opts)
         var im = CGPreflightListenEventAccess()
         if !im { im = CGRequestListenEventAccess() }
-        let r = startHID()
-        perm.stringValue = "Erişilebilirlik: \(ax ? "VAR ✅" : "YOK ❌")   Giriş İzleme: \(im ? "VAR ✅" : "YOK ❌")"
-            + (r == kIOReturnSuccess ? "" : "   ⚠️ HID açılamadı (\(r))")
 
         let hint = NSTextField(wrappingLabelWithString:
-            "1) Kumandada bir tuşa bas, aşağıda satırı belirir.\n" +
-            "2) Kutuya tıkla, klavyeden tuş bas. Tek kutu doluysa o tuş çalışır.\n" +
-            "3) İki kutu doluysa 1. tuş basılı tutulup 2. tuşa basılır (ör. Command + V = Yapıştır).")
+            "1) “Atamayı başlat”a bas.\n" +
+            "2) Kumandada bir tuşa bas, satırı belirir. Kutulara tıklayıp klavyeden tuş bas\n" +
+            "    (tek kutu = o tuş, iki kutu = 1. tuş basılı tutulup 2. tuşa basılır, ör. ⌘ + V).\n" +
+            "3) Bitince “Atamayı bitir”e bas. Bundan sonra yalnızca atanmış tuşlar çalışır.")
         hint.widthAnchor.constraint(equalToConstant: 540).isActive = true
 
-        let root = NSStackView(views: [perm, hint, last, list])
+        popup.addItem(withTitle: "Tüm cihazlar (Apple hariç)")
+        popup.target = self; popup.action = #selector(deviceChanged)
+        let clear = NSButton(title: "Boş satırları temizle", target: self, action: #selector(clearEmpty))
+        let devRow = NSStackView(views: [NSTextField(labelWithString: "Dinlenen cihaz:"), popup, clear])
+        devRow.spacing = 8
+
+        assignBtn.target = self; assignBtn.action = #selector(toggleAssign)
+        assignBtn.bezelStyle = .rounded; assignBtn.controlSize = .large
+        let root = NSStackView(views: [perm, assignBtn, devRow, hint, last, list])
         root.orientation = .vertical; root.alignment = .leading; root.spacing = 14
         root.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         list.orientation = .vertical; list.alignment = .leading; list.spacing = 8
@@ -152,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 480),
                        styleMask: [.titled, .closable], backing: .buffered, defer: false)
         win.title = "Kumanda Ayar"
+        win.isReleasedWhenClosed = false
         win.contentView = root
         win.center(); win.makeKeyAndOrderFront(nil)
 
@@ -175,18 +222,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         onHID = { [weak self] dev, page, usage in self?.handle(dev, page, usage) }
+        onDevice = { [weak self] name in self?.addDevice(name) }
+        applyFilter()
+        setupStatusItem()
+
+        let r = startHID()
+        perm.stringValue = "Erişilebilirlik: \(ax ? "VAR ✅" : "YOK ❌")   Giriş İzleme: \(im ? "VAR ✅" : "YOK ❌")"
+            + (r == kIOReturnSuccess ? "" : "   ⚠️ HID açılamadı (\(r))")
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }
+
+    func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showWindow(); return true
+    }
+
+    @objc func showWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        win.makeKeyAndOrderFront(nil)
+    }
+
+    @objc func toggleAssign() {
+        assigning.toggle()
+        activeBox?.refresh(); activeBox = nil
+        if !assigning { clearEmpty(); commit() }
+        updateModeUI()
+    }
+
+    func updateModeUI() {
+        assignBtn.title = assigning ? "⏹ Atamayı bitir" : "▶︎ Atamayı başlat"
+        toggleItem.title = assigning ? "Atamayı bitir" : "Atamayı başlat"
+        statusItem.button?.title = assigning ? " ●" : ""
+        last.stringValue = assigning ? "Atama açık: kumandada bir tuşa bas."
+                                     : "Atama kapalı. Yalnızca atanmış tuşlar çalışır."
+    }
+
+    func menuIcon() -> NSImage {
+        let img = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
+            NSColor.black.setStroke(); NSColor.black.setFill()
+            let body = NSBezierPath(roundedRect: NSRect(x: 5.5, y: 1.5, width: 7, height: 15), xRadius: 3.2, yRadius: 3.2)
+            body.lineWidth = 1.3; body.stroke()
+            NSBezierPath(ovalIn: NSRect(x: 7.4, y: 10.6, width: 3.2, height: 3.2)).fill()
+            NSBezierPath(ovalIn: NSRect(x: 8.0, y: 6.6, width: 2.0, height: 2.0)).fill()
+            NSBezierPath(ovalIn: NSRect(x: 8.0, y: 3.6, width: 2.0, height: 2.0)).fill()
+            return true
+        }
+        img.isTemplate = true
+        return img
+    }
+
+    func setupStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.image = menuIcon()
+        let menu = NSMenu()
+        toggleItem = NSMenuItem(title: "Atamayı başlat", action: #selector(toggleAssign), keyEquivalent: "")
+        toggleItem.target = self
+        let show = NSMenuItem(title: "Pencereyi aç", action: #selector(showWindow), keyEquivalent: "")
+        show.target = self
+        let quit = NSMenuItem(title: "Çıkış", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(toggleItem); menu.addItem(show); menu.addItem(.separator()); menu.addItem(quit)
+        statusItem.menu = menu
+    }
 
     func handle(_ dev: String, _ page: Int, _ usage: Int) {
+        if let s = selected, dev != s { return }
         let key = "\(dev)|\(page)|\(usage)"
-        last.stringValue = "Son sinyal: \(dev) · \(sourceName(page, usage))"
-        if let row = rows.first(where: { $0.key == key }) {
-            row.flash()
-        } else {
-            addRow(Row(device: dev, page: page, usage: usage, k1: nil, k2: nil))
+        if assigning {
+            // Atama modu: yeni tuşlar için satır oluştur, atamaları çalıştırma
+            last.stringValue = "Son sinyal: \(dev) · \(sourceName(page, usage))"
+            if let row = rows.first(where: { $0.key == key }) { row.flash() }
+            else { addRow(Row(device: dev, page: page, usage: usage, k1: nil, k2: nil)) }
+            return
         }
+        // Normal mod: yalnızca atanmış tuşlar çalışır, başka hiçbir şey eklenmez
         if let m = table[key] { performMapping(m) }
     }
 
@@ -197,6 +305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         row.del.identifier = NSUserInterfaceItemIdentifier(row.key)
         rows.append(row)
         list.addArrangedSubview(row.view)
+        applyFilter()
     }
 
     @objc func deleteTapped(_ b: NSButton) {

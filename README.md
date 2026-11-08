@@ -37,11 +37,16 @@ open build/KumandaMac.app
 ```
 
 ## Kullanım
+Uygulama menü çubuğunda bir kumanda ikonuyla çalışır. Pencereyi kapatsan da arka planda çalışmaya devam eder (kapatmak için menü çubuğu ikonu → **Çıkış**).
+
 1. Kumandayı Mac'e Bluetooth ile eşleştir.
-2. Uygulamayı aç ve kumandada bir tuşa bas, pencerede o tuşun satırı belirir.
-3. Satırdaki **ilk kutuya** tıkla ve klavyeden bir tuş bas. Tek kutu doluysa kumanda tuşu o tuş gibi çalışır.
-4. **İkinci kutuya** da tıklayıp bir tuş basarsan 1. tuş basılı tutulup 2. tuşa basılır. Örnek: 1. kutu `⌘ Command`, 2. kutu `V` → **Yapıştır**.
-5. Atamalar otomatik kaydedilir. Satırı **Sil** ile kaldırabilirsin.
+2. **Atamayı başlat**'a bas (pencereden veya menü çubuğu ikonundan). Atama sırasında ikonun yanında ● görünür.
+3. Kumandada bir tuşa bas, pencerede o tuşun satırı belirir.
+4. Satırdaki **ilk kutuya** tıkla ve klavyeden bir tuş bas. Tek kutu doluysa kumanda tuşu o tuş gibi çalışır.
+5. **İkinci kutuya** da tıklayıp bir tuş basarsan 1. tuş basılı tutulup 2. tuşa basılır. Örnek: 1. kutu `⌘ Command`, 2. kutu `V` → **Yapıştır**.
+6. İşin bitince **Atamayı bitir**'e bas. Boş satırlar silinir ve bundan sonra yalnızca atanan tuşlar çalışır, başka tuşlar listede görünmez.
+
+Atama modundayken kumandadaki tuşlar atamalarını çalıştırmaz, böylece kutuları doldururken yanlışlıkla işlem tetiklenmez.
 
 ## Nasıl çalışıyor
 Kumandalar çoğu zaman tuşları klavye olarak değil HID medya/tüketici sinyali olarak gönderir. Bu uygulama IOKit HID ile doğrudan cihazı dinler, bu yüzden Mac klavyesi etkilenmez (Apple cihazları yok sayılır). Atanan tuşlar `CGEvent` ile sisteme gönderilir.
@@ -49,8 +54,11 @@ Kumandalar çoğu zaman tuşları klavye olarak değil HID medya/tüketici sinya
 ## Bilinen sınırlamalar
 - Kumanda tuşunun orijinal işlevi engellenmez (ör. ses tuşu hem sesi değiştirir hem atamanı çalıştırır). Menü/ok/OK tuşlarında genelde sorun olmaz.
 - Tuş basılı tutulunca tekrarlamaz, her basış tek vuruştur.
-- Atamalar yalnızca uygulama açıkken çalışır.
+- Atamalar yalnızca uygulama çalışırken (menü çubuğunda göründüğü sürece) geçerlidir.
 - Harici (Apple dışı) Bluetooth klavyeler de satır olarak görünür.
 
 ## Lisans
 MIT, ayrıntılar için `LICENSE` dosyasına bak.
+
+## İkon
+`icon/make_icon.py` ile (Pillow + numpy) `icon/icon_1024.png` yeniden üretilebilir. `build.sh` bu dosyadan `AppIcon.icns` oluşturur.
