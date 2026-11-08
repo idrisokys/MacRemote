@@ -1,0 +1,14 @@
+# Derleme çıktısı
+build/
+KumandaMac-macos.zip
+*.o
+*.dSYM/
+.build/
+
+# macOS
+.DS_Store
+
+# Xcode
+xcuserdata/
+DerivedData/
+*.xcuserstate

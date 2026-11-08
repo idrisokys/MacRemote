@@ -1,0 +1,35 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derle
+        run: ./build.sh
+
+      - name: Zip oluştur
+        run: ditto -c -k --keepParent build/KumandaMac.app KumandaMac-macos.zip
+
+      - name: Artifact yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: KumandaMac-macos
+          path: KumandaMac-macos.zip
+
+      - name: Release oluştur (v* etiketinde)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: KumandaMac-macos.zip
