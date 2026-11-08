@@ -1,4 +1,5 @@
 import Cocoa
+import IOKit.hid
 
 // ---- Veri ----
 struct Mapping: Codable { var src: Int; var dst: Int; var flags: UInt64 }
@@ -28,6 +29,17 @@ func flagStr(_ f: UInt64) -> String {
          + (g.contains(.maskShift) ? "⇧" : "") + (g.contains(.maskCommand) ? "⌘" : "")
 }
 
+// ---- Tanılama günlüğü ----
+var logLines: [String] = []
+var onLog: (() -> Void)?
+func logEvent(_ s: String) {
+    DispatchQueue.main.async {
+        logLines.append(s)
+        if logLines.count > 8 { logLines.removeFirst() }
+        onLog?()
+    }
+}
+
 // ---- Olay yakalama ----
 enum Mode { case run, learnSrc, learnDst }
 var mode = Mode.run
@@ -35,6 +47,7 @@ var pendingSrc = 0
 var onSrc: ((Int) -> Void)?
 var onDst: ((Int, UInt64) -> Void)?
 var tap: CFMachPort?
+var hidManager: IOHIDManager?
 let marker: Int64 = 0x4B554D
 let relevant: UInt64 = CGEventFlags([.maskCommand, .maskShift, .maskAlternate, .maskControl]).rawValue
 
@@ -43,10 +56,19 @@ let callback: CGEventTapCallBack = { _, type, event, _ in
         if let t = tap { CGEvent.tapEnable(tap: t, enable: true) }
         return Unmanaged.passUnretained(event)
     }
+    if type.rawValue == 14 { // sistem/medya tuşları
+        if let ns = NSEvent(cgEvent: event), ns.subtype.rawValue == 8 {
+            let k = (ns.data1 & 0xFFFF0000) >> 16
+            let down = ((ns.data1 & 0xFF00) >> 8) == 0xA
+            if down { logEvent("Medya tuşu algılandı (kod \(k))") }
+        }
+        return Unmanaged.passUnretained(event)
+    }
     guard type == .keyDown || type == .keyUp else { return Unmanaged.passUnretained(event) }
     if event.getIntegerValueField(.eventSourceUserData) == marker { return Unmanaged.passUnretained(event) }
     let code = Int(event.getIntegerValueField(.keyboardEventKeycode))
     let isDown = (type == .keyDown)
+    if isDown { logEvent("Tuş algılandı: \(keyName(code)) (kod \(code))") }
 
     switch mode {
     case .learnSrc:
@@ -76,12 +98,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var win: NSWindow!
     let status = NSTextField(wrappingLabelWithString: "Hazır.")
     let list = NSStackView()
+    let diag = NSTextField(wrappingLabelWithString: "(henüz sinyal yok)")
 
     func applicationDidFinishLaunching(_ n: Notification) {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(opts)
+        let ax = AXIsProcessTrustedWithOptions(opts)
+        var im = CGPreflightListenEventAccess()
+        if !im { im = CGRequestListenEventAccess() }
+        startHID()
 
-        let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
+        let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << 14)
         tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
                                 options: .defaultTap, eventsOfInterest: CGEventMask(mask),
                                 callback: callback, userInfo: nil)
@@ -93,20 +119,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             status.stringValue = "İzin yok! Sistem Ayarları → Gizlilik ve Güvenlik → Erişilebilirlik ve Giriş İzleme bölümlerinde bu uygulamayı (veya Terminal'i) etkinleştirip yeniden başlat."
         }
 
+        let perm = NSTextField(wrappingLabelWithString:
+            "Erişilebilirlik izni: \(ax ? "VAR ✅" : "YOK ❌")   Giriş İzleme izni: \(im ? "VAR ✅" : "YOK ❌")")
+        let diagTitle = NSTextField(labelWithString: "Tanılama (gelen her sinyal burada görünür):")
+        diag.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        onLog = { [weak self] in self?.diag.stringValue = logLines.joined(separator: "\n") }
+
         let add = NSButton(title: "Yeni atama ekle", target: self, action: #selector(addTapped))
         let cancel = NSButton(title: "İptal", target: self, action: #selector(cancelTapped))
         let row = NSStackView(views: [add, cancel]); row.spacing = 8
-        let root = NSStackView(views: [row, status, list])
+        let root = NSStackView(views: [perm, row, status, list, diagTitle, diag])
         root.orientation = .vertical; root.alignment = .leading; root.spacing = 12
         root.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         list.orientation = .vertical; list.alignment = .leading; list.spacing = 6
 
-        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 420),
+        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 520),
                        styleMask: [.titled, .closable], backing: .buffered, defer: false)
         win.title = "Kumanda Ayar"
         win.contentView = root
         win.center(); win.makeKeyAndOrderFront(nil)
         refresh()
+    }
+
+    func startHID() {
+        let hid = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+        IOHIDManagerSetDeviceMatching(hid, nil)
+        IOHIDManagerRegisterInputValueCallback(hid, { _, _, _, value in
+            let el = IOHIDValueGetElement(value)
+            let page = IOHIDElementGetUsagePage(el)
+            let usage = IOHIDElementGetUsage(el)
+            guard page == 0x07 || page == 0x0C, usage > 0, usage < 0xFFFF,
+                  IOHIDValueGetIntegerValue(value) == 1 else { return }
+            let dev = IOHIDElementGetDevice(el)
+            let name = IOHIDDeviceGetProperty(dev, kIOHIDProductKey as CFString) as? String ?? "?"
+            logEvent("HID [\(name)] sayfa 0x\(String(page, radix: 16)) kullanım 0x\(String(usage, radix: 16))")
+        }, nil)
+        IOHIDManagerScheduleWithRunLoop(hid, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+        IOHIDManagerOpen(hid, IOOptionBits(kIOHIDOptionsTypeNone))
+        hidManager = hid
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
