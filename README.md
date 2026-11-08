@@ -38,15 +38,19 @@ open build/KumandaMac.app
 
 ## Kullanım
 1. Kumandayı Mac'e Bluetooth ile eşleştir.
-2. **Yeni atama ekle** düğmesine bas.
-3. Kumandada atamak istediğin tuşa bas.
-4. Yerine çalışacak tuşa veya kombinasyona bas (ör. `⌘V`).
-5. Silmek için listedeki **Sil** düğmesini kullan.
+2. Uygulamayı aç ve kumandada bir tuşa bas, pencerede o tuşun satırı belirir.
+3. Satırdaki **ilk kutuya** tıkla ve klavyeden bir tuş bas. Tek kutu doluysa kumanda tuşu o tuş gibi çalışır.
+4. **İkinci kutuya** da tıklayıp bir tuş basarsan 1. tuş basılı tutulup 2. tuşa basılır. Örnek: 1. kutu `⌘ Command`, 2. kutu `V` → **Yapıştır**.
+5. Atamalar otomatik kaydedilir. Satırı **Sil** ile kaldırabilirsin.
+
+## Nasıl çalışıyor
+Kumandalar çoğu zaman tuşları klavye olarak değil HID medya/tüketici sinyali olarak gönderir. Bu uygulama IOKit HID ile doğrudan cihazı dinler, bu yüzden Mac klavyesi etkilenmez (Apple cihazları yok sayılır). Atanan tuşlar `CGEvent` ile sisteme gönderilir.
 
 ## Bilinen sınırlamalar
-- Atamalar tüm klavyeleri etkiler, uygulama kumanda ile Mac klavyesini ayırt etmez.
-- Ses, Home, Menü gibi medya tuşları ve Netflix, Assistant gibi özel tuşlar yakalanmayabilir. Bunlar için [Karabiner-Elements](https://karabiner-elements.pqrs.org/) kullanılabilir.
+- Kumanda tuşunun orijinal işlevi engellenmez (ör. ses tuşu hem sesi değiştirir hem atamanı çalıştırır). Menü/ok/OK tuşlarında genelde sorun olmaz.
+- Tuş basılı tutulunca tekrarlamaz, her basış tek vuruştur.
 - Atamalar yalnızca uygulama açıkken çalışır.
+- Harici (Apple dışı) Bluetooth klavyeler de satır olarak görünür.
 
 ## Lisans
 MIT, ayrıntılar için `LICENSE` dosyasına bak.
