@@ -42,7 +42,7 @@ func postKey(_ code: Int, down: Bool, flags: CGEventFlags) {
         e.post(tap: .cghidEventTap)
     }
 }
-func perform(_ m: Mapping) {
+func performMapping(_ m: Mapping) {
     let f: CGEventFlags = modFlag[m.k1] ?? []
     postKey(m.k1, down: true, flags: f)
     if let k2 = m.k2 {
@@ -187,12 +187,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             addRow(Row(device: dev, page: page, usage: usage, k1: nil, k2: nil))
         }
-        if let m = table[key] { perform(m) }
+        if let m = table[key] { performMapping(m) }
     }
 
     func addRow(_ row: Row) {
-        row.b1.onChange = { [weak self] c in self?.commit() }
-        row.b2.onChange = { [weak self] c in self?.commit() }
+        row.b1.onChange = { [weak self] _ in self?.commit() }
+        row.b2.onChange = { [weak self] _ in self?.commit() }
         row.del.target = self; row.del.action = #selector(deleteTapped(_:))
         row.del.identifier = NSUserInterfaceItemIdentifier(row.key)
         rows.append(row)
