@@ -52,6 +52,8 @@ Atama modundayken kumandadaki tuşlar atamalarını çalıştırmaz, böylece ku
 Her satırdaki açılır menüden klavye tuşu yerine bir **fare eylemi** seçebilirsin:
 sol tık, sağ tık, orta tık, çift tık, tekerlek yukarı/aşağı ve imleci yukarı/aşağı/sola/sağa hareket ettirme.
 
+**Uygulama kısayolu:** menüden **🚀 Uygulama aç**'ı seçip bir `.app` dosyası seç. O kumanda tuşu uygulamayı açar (zaten açıksa öne getirir). Uygulamayı değiştirmek için satırdaki uygulama düğmesine tıkla.
+
 - **İmleç hızı** ve **Tekerlek hızı** çubuklarıyla hızı ayarlarsın (imleç için piksel/kare değeridir).
 - Hareket ve tekerlek tuşu basılı tutulduğu sürece devam eder ve ilk 0,7 saniyede yavaştan hızlıya kademeli hızlanır, böylece küçük hareketler de yapabilirsin.
 - Tekerlek yönü ters çalışıyorsa (macOS'un "Doğal kaydırma" ayarı yüzünden) yukarı/aşağı atamalarını yer değiştir.

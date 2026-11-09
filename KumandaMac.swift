@@ -1,8 +1,9 @@
 import Cocoa
 import IOKit.hid
+import UniformTypeIdentifiers
 
 // ---------- Veri ----------
-struct Mapping: Codable { var device: String; var page: Int; var usage: Int; var k1: Int; var k2: Int?; var mouse: String? }
+struct Mapping: Codable { var device: String; var page: Int; var usage: Int; var k1: Int; var k2: Int?; var mouse: String?; var app: String? }
 
 let modFlag: [Int: CGEventFlags] = [
     54: .maskCommand, 55: .maskCommand, 56: .maskShift, 60: .maskShift,
@@ -35,21 +36,48 @@ func sourceName(_ page: Int, _ usage: Int) -> String {
 }
 
 // ---------- Tuş gönderme ----------
+// Ok/gezinme/F tuşları gerçek klavyede fn bayrağıyla gelir (Mission Control gibi kısayollar bunu bekler)
+let fnKeys: Set<Int> = [123, 124, 125, 126, 115, 116, 117, 119, 121,
+                        122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111]
+
 func postKey(_ code: Int, down: Bool, flags: CGEventFlags) {
-    let s = CGEventSource(stateID: .hidSystemState)
-    if let e = CGEvent(keyboardEventSource: s, virtualKey: CGKeyCode(code), keyDown: down) {
-        e.flags = flags
-        e.post(tap: .cghidEventTap)
+    let src = CGEventSource(stateID: .hidSystemState)
+    if modFlag[code] != nil {
+        // Değiştirici tuşlar (⌘ ⇧ ⌥ ⌃ fn) gerçek klavyede "flagsChanged" olayıdır
+        if let e = CGEvent(source: src) {
+            e.type = .flagsChanged
+            e.setIntegerValueField(.keyboardEventKeycode, value: Int64(code))
+            e.flags = flags
+            e.post(tap: .cghidEventTap)
+        }
+        return
     }
+    guard let e = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(code), keyDown: down) else { return }
+    var f = flags
+    if fnKeys.contains(code) { f.insert(.maskSecondaryFn) }
+    e.flags = f
+    e.post(tap: .cghidEventTap)
 }
+
 func performMapping(_ m: Mapping) {
     let f: CGEventFlags = modFlag[m.k1] ?? []
-    postKey(m.k1, down: true, flags: f)
+    var steps: [() -> Void] = [{ postKey(m.k1, down: true, flags: f) }]
     if let k2 = m.k2 {
-        postKey(k2, down: true, flags: f)
-        postKey(k2, down: false, flags: f)
+        steps.append { postKey(k2, down: true, flags: f) }
+        steps.append { postKey(k2, down: false, flags: f) }
     }
-    postKey(m.k1, down: false, flags: [])
+    steps.append { postKey(m.k1, down: false, flags: []) }
+    for (i, st) in steps.enumerated() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.012 * Double(i), execute: st)
+    }
+}
+
+func openApp(_ path: String) {
+    NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: path),
+                                       configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
+}
+func appName(_ path: String) -> String {
+    URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
 }
 
 // ---------- Fare ----------
@@ -58,7 +86,8 @@ let mouseOptions: [(String, String)] = [
     ("left", "🖱 Sol tık"), ("right", "🖱 Sağ tık"), ("middle", "🖱 Orta tık"), ("double", "🖱 Çift tık"),
     ("scrollUp", "🖱 Tekerlek yukarı"), ("scrollDown", "🖱 Tekerlek aşağı"),
     ("moveUp", "🖱 İmleç yukarı"), ("moveDown", "🖱 İmleç aşağı"),
-    ("moveLeft", "🖱 İmleç sola"), ("moveRight", "🖱 İmleç sağa")
+    ("moveLeft", "🖱 İmleç sola"), ("moveRight", "🖱 İmleç sağa"),
+    ("app", "🚀 Uygulama aç")
 ]
 var moveSpeed: Double = UserDefaults.standard.object(forKey: "moveSpeed") as? Double ?? 12
 var scrollSpeed: Double = UserDefaults.standard.object(forKey: "scrollSpeed") as? Double ?? 20
@@ -202,8 +231,10 @@ final class KeyBox: NSButton {
 final class Row {
     let device: String, page: Int, usage: Int
     var mouse: String?
+    var appPath: String? { didSet { refreshAppTitle() } }
     let label: NSTextField
     let act = NSPopUpButton(frame: .zero, pullsDown: false)
+    let appBtn = NSButton(title: "Uygulama seç…", target: nil, action: nil)
     let b1 = KeyBox(frame: .zero), b2 = KeyBox(frame: .zero)
     let plus = NSTextField(labelWithString: "+")
     let del = NSButton(title: "Sil", target: nil, action: nil)
@@ -211,7 +242,7 @@ final class Row {
     var key: String { "\(device)|\(page)|\(usage)" }
     var isEmpty: Bool { b1.code == nil && b2.code == nil && mouse == nil }
 
-    init(device: String, page: Int, usage: Int, k1: Int?, k2: Int?, mouse: String? = nil) {
+    init(device: String, page: Int, usage: Int, k1: Int?, k2: Int?, mouse: String? = nil, appPath: String? = nil) {
         self.device = device; self.page = page; self.usage = usage; self.mouse = mouse
         label = NSTextField(labelWithString: "\(device) · \(sourceName(page, usage))")
         label.widthAnchor.constraint(equalToConstant: 190).isActive = true
@@ -220,13 +251,19 @@ final class Row {
         for o in mouseOptions { act.addItem(withTitle: o.1) }
         if let m = mouse, let i = mouseOptions.firstIndex(where: { $0.0 == m }) { act.selectItem(at: i) }
         act.widthAnchor.constraint(equalToConstant: 150).isActive = true
-        view = NSStackView(views: [label, act, b1, plus, b2, del])
+        appBtn.bezelStyle = .rounded
+        appBtn.widthAnchor.constraint(equalToConstant: 270).isActive = true
+        view = NSStackView(views: [label, act, appBtn, b1, plus, b2, del])
         view.spacing = 8
+        self.appPath = appPath
+        refreshAppTitle()
         updateVisibility()
     }
+    func refreshAppTitle() { appBtn.title = appPath.map { "🚀 " + appName($0) } ?? "Uygulama seç…" }
     func updateVisibility() {
         let kb = (mouse == nil)
         b1.isHidden = !kb; plus.isHidden = !kb; b2.isHidden = !kb
+        appBtn.isHidden = (mouse != "app")
     }
     func flash() {
         label.textColor = .systemGreen
@@ -243,6 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var rows: [Row] = []
     var table: [String: Mapping] = [:]
     var assigning = false
+    var hidErr: IOReturn = 0
     let moveLbl = NSTextField(labelWithString: "")
     let scrollLbl = NSTextField(labelWithString: "")
     let assignBtn = NSButton(title: "▶︎ Atamayı başlat", target: nil, action: nil)
@@ -271,7 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for r in rows { r.view.isHidden = (selected != nil && r.device != selected) }
     }
 
-    @objc func clearEmpty() {
+    func clearEmpty() {
         for r in rows where r.isEmpty {
             list.removeArrangedSubview(r.view); r.view.removeFromSuperview()
         }
@@ -280,9 +318,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        let ax = AXIsProcessTrustedWithOptions(opts)
-        var im = CGPreflightListenEventAccess()
-        if !im { im = CGRequestListenEventAccess() }
+        _ = AXIsProcessTrustedWithOptions(opts)
+        if !CGPreflightListenEventAccess() { _ = CGRequestListenEventAccess() }
 
         let hint = NSTextField(wrappingLabelWithString:
             "1) “Atamayı başlat”a bas, kumandada bir tuşa bas: satırı belirir.\n" +
@@ -293,8 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         popup.addItem(withTitle: "Tüm cihazlar (Apple hariç)")
         popup.target = self; popup.action = #selector(deviceChanged)
-        let clear = NSButton(title: "Boş satırları temizle", target: self, action: #selector(clearEmpty))
-        let devRow = NSStackView(views: [NSTextField(labelWithString: "Dinlenen cihaz:"), popup, clear])
+        let devRow = NSStackView(views: [NSTextField(labelWithString: "Dinlenen cihaz:"), popup])
         devRow.spacing = 8
 
         func speedRow(_ title: String, _ lo: Double, _ hi: Double, _ v: Double, _ act: Selector, _ lbl: NSTextField) -> NSStackView {
@@ -327,7 +363,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let d = UserDefaults.standard.data(forKey: "maps2"),
            let saved = try? JSONDecoder().decode([Mapping].self, from: d) {
             for m in saved { addRow(Row(device: m.device, page: m.page, usage: m.usage,
-                                        k1: m.mouse == nil ? m.k1 : nil, k2: m.k2, mouse: m.mouse)) }
+                                        k1: m.mouse == nil ? m.k1 : nil, k2: m.k2,
+                                        mouse: m.mouse, appPath: m.app)) }
         }
         rebuildTable()
 
@@ -348,9 +385,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyFilter()
         setupStatusItem()
 
-        let r = startHID()
-        perm.stringValue = "Erişilebilirlik: \(ax ? "VAR ✅" : "YOK ❌")   Giriş İzleme: \(im ? "VAR ✅" : "YOK ❌")"
-            + (r == kIOReturnSuccess ? "" : "   ⚠️ HID açılamadı (\(r))")
+        hidErr = startHID()
+        refreshPerm()
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.refreshPerm() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }
@@ -371,8 +408,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let id = b.identifier?.rawValue, let row = rows.first(where: { $0.key == id }) else { return }
         let m = mouseOptions[b.indexOfSelectedItem].0
         row.mouse = m.isEmpty ? nil : m
+        if m == "app" && row.appPath == nil {
+            if !chooseApp(for: row) { row.mouse = nil; b.selectItem(at: 0) }
+        }
         row.updateVisibility()
         commit()
+    }
+
+    @discardableResult
+    func chooseApp(for row: Row) -> Bool {
+        let panel = NSOpenPanel()
+        panel.title = "Açılacak uygulamayı seç"
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [UTType.application]
+        panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
+        row.appPath = url.path
+        return true
+    }
+
+    @objc func appBtnTapped(_ b: NSButton) {
+        guard let id = b.identifier?.rawValue, let row = rows.first(where: { $0.key == id }) else { return }
+        if chooseApp(for: row) { commit() }
+    }
+
+    func refreshPerm() {
+        let ax = AXIsProcessTrusted(), im = CGPreflightListenEventAccess()
+        perm.stringValue = "Erişilebilirlik: \(ax ? "VAR ✅" : "YOK ❌")   Giriş İzleme: \(im ? "VAR ✅" : "YOK ❌")"
+            + (hidErr == kIOReturnSuccess ? "" : "   ⚠️ HID açılamadı (\(hidErr))")
+        perm.isHidden = ax && im && hidErr == kIOReturnSuccess   // her şey tamamsa satırı gizle
     }
 
     @objc func showWindow() {
@@ -438,6 +502,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let m = table[key] else { return }
         if let mo = m.mouse {
             switch mo {
+            case "app": if down, let path = m.app { openApp(path) }
             case "left", "right", "middle", "double": if down { mouseClick(mo) }
             default: if down { Hold.press(key, mo) } else { Hold.release(key) }
             }
@@ -451,6 +516,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         row.b2.onChange = { [weak self] _ in self?.commit() }
         row.act.target = self; row.act.action = #selector(actionChanged(_:))
         row.act.identifier = NSUserInterfaceItemIdentifier(row.key)
+        row.appBtn.target = self; row.appBtn.action = #selector(appBtnTapped(_:))
+        row.appBtn.identifier = NSUserInterfaceItemIdentifier(row.key)
         row.del.target = self; row.del.action = #selector(deleteTapped(_:))
         row.del.identifier = NSUserInterfaceItemIdentifier(row.key)
         rows.append(row)
@@ -469,7 +536,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         table = [:]
         for r in rows {
             if let mo = r.mouse {
-                table[r.key] = Mapping(device: r.device, page: r.page, usage: r.usage, k1: -1, k2: nil, mouse: mo)
+                if mo == "app" && r.appPath == nil { continue }
+                table[r.key] = Mapping(device: r.device, page: r.page, usage: r.usage, k1: -1, k2: nil,
+                                       mouse: mo, app: r.appPath)
                 continue
             }
             let k1 = r.b1.code ?? r.b2.code
