@@ -2,7 +2,7 @@ import Cocoa
 import IOKit.hid
 
 // ---------- Veri ----------
-struct Mapping: Codable { var device: String; var page: Int; var usage: Int; var k1: Int; var k2: Int? }
+struct Mapping: Codable { var device: String; var page: Int; var usage: Int; var k1: Int; var k2: Int?; var mouse: String? }
 
 let modFlag: [Int: CGEventFlags] = [
     54: .maskCommand, 55: .maskCommand, 56: .maskShift, 60: .maskShift,
@@ -52,8 +52,104 @@ func performMapping(_ m: Mapping) {
     postKey(m.k1, down: false, flags: [])
 }
 
+// ---------- Fare ----------
+let mouseOptions: [(String, String)] = [
+    ("", "Klavye tuşu"),
+    ("left", "🖱 Sol tık"), ("right", "🖱 Sağ tık"), ("middle", "🖱 Orta tık"), ("double", "🖱 Çift tık"),
+    ("scrollUp", "🖱 Tekerlek yukarı"), ("scrollDown", "🖱 Tekerlek aşağı"),
+    ("moveUp", "🖱 İmleç yukarı"), ("moveDown", "🖱 İmleç aşağı"),
+    ("moveLeft", "🖱 İmleç sola"), ("moveRight", "🖱 İmleç sağa")
+]
+var moveSpeed: Double = UserDefaults.standard.object(forKey: "moveSpeed") as? Double ?? 12
+var scrollSpeed: Double = UserDefaults.standard.object(forKey: "scrollSpeed") as? Double ?? 20
+
+func cursorPos() -> CGPoint { CGEvent(source: nil)?.location ?? .zero }
+
+func clampToDisplays(_ p: CGPoint) -> CGPoint {
+    var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+    var n: UInt32 = 0
+    CGGetActiveDisplayList(16, &ids, &n)
+    var all = CGRect.null
+    for i in 0..<Int(n) { all = all.union(CGDisplayBounds(ids[i])) }
+    if all.isNull { return p }
+    return CGPoint(x: min(max(p.x, all.minX), all.maxX - 1), y: min(max(p.y, all.minY), all.maxY - 1))
+}
+
+func moveCursor(dx: Double, dy: Double) {
+    let old = cursorPos()
+    let np = clampToDisplays(CGPoint(x: old.x + dx, y: old.y + dy))
+    guard let e = CGEvent(mouseEventSource: CGEventSource(stateID: .hidSystemState),
+                          mouseType: .mouseMoved, mouseCursorPosition: np, mouseButton: .left) else { return }
+    e.setIntegerValueField(.mouseEventDeltaX, value: Int64(np.x - old.x))
+    e.setIntegerValueField(.mouseEventDeltaY, value: Int64(np.y - old.y))
+    e.post(tap: .cghidEventTap)
+}
+
+func mouseClick(_ kind: String) {
+    let p = cursorPos()
+    let src = CGEventSource(stateID: .hidSystemState)
+    var downT = CGEventType.leftMouseDown, upT = CGEventType.leftMouseUp, btn = CGMouseButton.left
+    switch kind {
+    case "right": downT = .rightMouseDown; upT = .rightMouseUp; btn = .right
+    case "middle": downT = .otherMouseDown; upT = .otherMouseUp; btn = .center
+    default: break
+    }
+    let times = (kind == "double") ? 2 : 1
+    for i in 1...times {
+        for t in [downT, upT] {
+            if let e = CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: btn) {
+                e.setIntegerValueField(.mouseEventClickState, value: Int64(i))
+                e.post(tap: .cghidEventTap)
+            }
+        }
+    }
+}
+
+func mouseScroll(_ amount: Int32) {
+    CGEvent(scrollWheelEvent2Source: CGEventSource(stateID: .hidSystemState), units: .pixel,
+            wheelCount: 1, wheel1: amount, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
+}
+
+// Tuş basılı tutulduğu sürece imleci/tekerleği sürekli çalıştırır (kademeli hızlanma ile)
+enum Hold {
+    static var timer: Timer?
+    static var heldKey = ""
+    static var action = ""
+    static var start = Date()
+    static var last = Date()
+
+    static func press(_ k: String, _ a: String) {
+        if k == heldKey, timer != nil { last = Date(); return }
+        stop()
+        heldKey = k; action = a; start = Date(); last = Date()
+        tick()
+        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { _ in Hold.tick() }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+    static func release(_ k: String) { if k == heldKey { stop() } }
+    static func stop() { timer?.invalidate(); timer = nil; heldKey = "" }
+
+    static func tick() {
+        let now = Date()
+        if now.timeIntervalSince(last) > 3 { stop(); return } // bırakma sinyali kaçarsa güvenlik
+        let f = 0.35 + 0.65 * min(1, now.timeIntervalSince(start) / 0.7)
+        let v = max(1, moveSpeed * f)
+        let sc = Int32(max(1, scrollSpeed * f))
+        switch action {
+        case "moveUp": moveCursor(dx: 0, dy: -v)
+        case "moveDown": moveCursor(dx: 0, dy: v)
+        case "moveLeft": moveCursor(dx: -v, dy: 0)
+        case "moveRight": moveCursor(dx: v, dy: 0)
+        case "scrollUp": mouseScroll(sc)
+        case "scrollDown": mouseScroll(-sc)
+        default: break
+        }
+    }
+}
+
 // ---------- Kumanda dinleme (HID) ----------
-var onHID: ((String, Int, Int) -> Void)?
+var onHID: ((String, Int, Int, Bool) -> Void)?
 var onDevice: ((String) -> Void)?
 var hidManager: IOHIDManager?
 var activeBox: KeyBox?
@@ -65,13 +161,13 @@ func startHID() -> IOReturn {
         let el = IOHIDValueGetElement(value)
         let page = Int(IOHIDElementGetUsagePage(el))
         let usage = Int(IOHIDElementGetUsage(el))
-        guard page == 0x07 || page == 0x0C, usage > 0, usage < 0xFFFF,
-              IOHIDValueGetIntegerValue(value) == 1 else { return }
+        guard page == 0x07 || page == 0x0C, usage > 0, usage < 0xFFFF else { return }
+        let isDown = IOHIDValueGetIntegerValue(value) != 0
         let dev = IOHIDElementGetDevice(el)
         let vendor = IOHIDDeviceGetProperty(dev, kIOHIDVendorIDKey as CFString) as? Int ?? 0
         if vendor == 0x05AC || vendor == 0x004C { return } // Apple cihazları yok sayılır
         let name = IOHIDDeviceGetProperty(dev, kIOHIDProductKey as CFString) as? String ?? "Bilinmeyen"
-        onHID?(name, page, usage)
+        onHID?(name, page, usage, isDown)
     }, nil)
     IOHIDManagerRegisterDeviceMatchingCallback(hid, { _, _, _, dev in
         let vendor = IOHIDDeviceGetProperty(dev, kIOHIDVendorIDKey as CFString) as? Int ?? 0
@@ -105,21 +201,32 @@ final class KeyBox: NSButton {
 // ---------- Satır ----------
 final class Row {
     let device: String, page: Int, usage: Int
+    var mouse: String?
     let label: NSTextField
+    let act = NSPopUpButton(frame: .zero, pullsDown: false)
     let b1 = KeyBox(frame: .zero), b2 = KeyBox(frame: .zero)
+    let plus = NSTextField(labelWithString: "+")
     let del = NSButton(title: "Sil", target: nil, action: nil)
     let view: NSStackView
     var key: String { "\(device)|\(page)|\(usage)" }
+    var isEmpty: Bool { b1.code == nil && b2.code == nil && mouse == nil }
 
-    init(device: String, page: Int, usage: Int, k1: Int?, k2: Int?) {
-        self.device = device; self.page = page; self.usage = usage
+    init(device: String, page: Int, usage: Int, k1: Int?, k2: Int?, mouse: String? = nil) {
+        self.device = device; self.page = page; self.usage = usage; self.mouse = mouse
         label = NSTextField(labelWithString: "\(device) · \(sourceName(page, usage))")
-        label.widthAnchor.constraint(equalToConstant: 200).isActive = true
+        label.widthAnchor.constraint(equalToConstant: 190).isActive = true
         label.lineBreakMode = .byTruncatingTail
         b1.code = k1; b2.code = k2
-        let plus = NSTextField(labelWithString: "+")
-        view = NSStackView(views: [label, b1, plus, b2, del])
+        for o in mouseOptions { act.addItem(withTitle: o.1) }
+        if let m = mouse, let i = mouseOptions.firstIndex(where: { $0.0 == m }) { act.selectItem(at: i) }
+        act.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        view = NSStackView(views: [label, act, b1, plus, b2, del])
         view.spacing = 8
+        updateVisibility()
+    }
+    func updateVisibility() {
+        let kb = (mouse == nil)
+        b1.isHidden = !kb; plus.isHidden = !kb; b2.isHidden = !kb
     }
     func flash() {
         label.textColor = .systemGreen
@@ -136,6 +243,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var rows: [Row] = []
     var table: [String: Mapping] = [:]
     var assigning = false
+    let moveLbl = NSTextField(labelWithString: "")
+    let scrollLbl = NSTextField(labelWithString: "")
     let assignBtn = NSButton(title: "▶︎ Atamayı başlat", target: nil, action: nil)
     var statusItem: NSStatusItem!
     var toggleItem: NSMenuItem!
@@ -163,10 +272,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func clearEmpty() {
-        for r in rows where r.b1.code == nil && r.b2.code == nil {
+        for r in rows where r.isEmpty {
             list.removeArrangedSubview(r.view); r.view.removeFromSuperview()
         }
-        rows.removeAll { $0.b1.code == nil && $0.b2.code == nil }
+        rows.removeAll { $0.isEmpty }
     }
 
     func applicationDidFinishLaunching(_ n: Notification) {
@@ -176,11 +285,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !im { im = CGRequestListenEventAccess() }
 
         let hint = NSTextField(wrappingLabelWithString:
-            "1) “Atamayı başlat”a bas.\n" +
-            "2) Kumandada bir tuşa bas, satırı belirir. Kutulara tıklayıp klavyeden tuş bas\n" +
-            "    (tek kutu = o tuş, iki kutu = 1. tuş basılı tutulup 2. tuşa basılır, ör. ⌘ + V).\n" +
-            "3) Bitince “Atamayı bitir”e bas. Bundan sonra yalnızca atanmış tuşlar çalışır.")
-        hint.widthAnchor.constraint(equalToConstant: 540).isActive = true
+            "1) “Atamayı başlat”a bas, kumandada bir tuşa bas: satırı belirir.\n" +
+            "2) Klavye tuşu için kutulara tıkla ve tuş bas (iki kutu = 1. tuş basılı tutulup 2. tuşa basılır, ör. ⌘ + V).\n" +
+            "3) Fare için açılır menüden tıklama, tekerlek veya imleç hareketi seç.\n" +
+            "4) Bitince “Atamayı bitir”e bas. Bundan sonra yalnızca atanmış tuşlar çalışır.")
+        hint.widthAnchor.constraint(equalToConstant: 720).isActive = true
 
         popup.addItem(withTitle: "Tüm cihazlar (Apple hariç)")
         popup.target = self; popup.action = #selector(deviceChanged)
@@ -188,14 +297,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let devRow = NSStackView(views: [NSTextField(labelWithString: "Dinlenen cihaz:"), popup, clear])
         devRow.spacing = 8
 
+        func speedRow(_ title: String, _ lo: Double, _ hi: Double, _ v: Double, _ act: Selector, _ lbl: NSTextField) -> NSStackView {
+            let sl = NSSlider(value: v, minValue: lo, maxValue: hi, target: self, action: act)
+            sl.widthAnchor.constraint(equalToConstant: 240).isActive = true
+            lbl.stringValue = String(Int(v))
+            let t = NSTextField(labelWithString: title)
+            t.widthAnchor.constraint(equalToConstant: 130).isActive = true
+            let r = NSStackView(views: [t, sl, lbl]); r.spacing = 8
+            return r
+        }
+        let moveRow = speedRow("İmleç hızı:", 1, 40, moveSpeed, #selector(moveSpeedChanged(_:)), moveLbl)
+        let scrollRow = speedRow("Tekerlek hızı:", 1, 80, scrollSpeed, #selector(scrollSpeedChanged(_:)), scrollLbl)
+
         assignBtn.target = self; assignBtn.action = #selector(toggleAssign)
         assignBtn.bezelStyle = .rounded; assignBtn.controlSize = .large
-        let root = NSStackView(views: [perm, assignBtn, devRow, hint, last, list])
+        let root = NSStackView(views: [perm, assignBtn, devRow, moveRow, scrollRow, hint, last, list])
         root.orientation = .vertical; root.alignment = .leading; root.spacing = 14
         root.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         list.orientation = .vertical; list.alignment = .leading; list.spacing = 8
 
-        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 480),
+        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 600),
                        styleMask: [.titled, .closable], backing: .buffered, defer: false)
         win.title = "Kumanda Ayar"
         win.isReleasedWhenClosed = false
@@ -205,7 +326,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Kayıtlı atamaları yükle
         if let d = UserDefaults.standard.data(forKey: "maps2"),
            let saved = try? JSONDecoder().decode([Mapping].self, from: d) {
-            for m in saved { addRow(Row(device: m.device, page: m.page, usage: m.usage, k1: m.k1, k2: m.k2)) }
+            for m in saved { addRow(Row(device: m.device, page: m.page, usage: m.usage,
+                                        k1: m.mouse == nil ? m.k1 : nil, k2: m.k2, mouse: m.mouse)) }
         }
         rebuildTable()
 
@@ -221,7 +343,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return nil
         }
 
-        onHID = { [weak self] dev, page, usage in self?.handle(dev, page, usage) }
+        onHID = { [weak self] dev, page, usage, down in self?.handle(dev, page, usage, down) }
         onDevice = { [weak self] name in self?.addDevice(name) }
         applyFilter()
         setupStatusItem()
@@ -237,6 +359,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showWindow(); return true
     }
 
+    @objc func moveSpeedChanged(_ s: NSSlider) {
+        moveSpeed = s.doubleValue; moveLbl.stringValue = String(Int(s.doubleValue))
+        UserDefaults.standard.set(moveSpeed, forKey: "moveSpeed")
+    }
+    @objc func scrollSpeedChanged(_ s: NSSlider) {
+        scrollSpeed = s.doubleValue; scrollLbl.stringValue = String(Int(s.doubleValue))
+        UserDefaults.standard.set(scrollSpeed, forKey: "scrollSpeed")
+    }
+    @objc func actionChanged(_ b: NSPopUpButton) {
+        guard let id = b.identifier?.rawValue, let row = rows.first(where: { $0.key == id }) else { return }
+        let m = mouseOptions[b.indexOfSelectedItem].0
+        row.mouse = m.isEmpty ? nil : m
+        row.updateVisibility()
+        commit()
+    }
+
     @objc func showWindow() {
         NSApp.activate(ignoringOtherApps: true)
         win.makeKeyAndOrderFront(nil)
@@ -244,6 +382,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func toggleAssign() {
         assigning.toggle()
+        Hold.stop()
         activeBox?.refresh(); activeBox = nil
         if !assigning { clearEmpty(); commit() }
         updateModeUI()
@@ -284,23 +423,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
-    func handle(_ dev: String, _ page: Int, _ usage: Int) {
+    func handle(_ dev: String, _ page: Int, _ usage: Int, _ down: Bool) {
         if let s = selected, dev != s { return }
         let key = "\(dev)|\(page)|\(usage)"
         if assigning {
             // Atama modu: yeni tuşlar için satır oluştur, atamaları çalıştırma
+            guard down else { return }
             last.stringValue = "Son sinyal: \(dev) · \(sourceName(page, usage))"
             if let row = rows.first(where: { $0.key == key }) { row.flash() }
             else { addRow(Row(device: dev, page: page, usage: usage, k1: nil, k2: nil)) }
             return
         }
         // Normal mod: yalnızca atanmış tuşlar çalışır, başka hiçbir şey eklenmez
-        if let m = table[key] { performMapping(m) }
+        guard let m = table[key] else { return }
+        if let mo = m.mouse {
+            switch mo {
+            case "left", "right", "middle", "double": if down { mouseClick(mo) }
+            default: if down { Hold.press(key, mo) } else { Hold.release(key) }
+            }
+            return
+        }
+        if down { performMapping(m) }
     }
 
     func addRow(_ row: Row) {
         row.b1.onChange = { [weak self] _ in self?.commit() }
         row.b2.onChange = { [weak self] _ in self?.commit() }
+        row.act.target = self; row.act.action = #selector(actionChanged(_:))
+        row.act.identifier = NSUserInterfaceItemIdentifier(row.key)
         row.del.target = self; row.del.action = #selector(deleteTapped(_:))
         row.del.identifier = NSUserInterfaceItemIdentifier(row.key)
         rows.append(row)
@@ -318,6 +468,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func rebuildTable() {
         table = [:]
         for r in rows {
+            if let mo = r.mouse {
+                table[r.key] = Mapping(device: r.device, page: r.page, usage: r.usage, k1: -1, k2: nil, mouse: mo)
+                continue
+            }
             let k1 = r.b1.code ?? r.b2.code
             let k2 = r.b1.code == nil ? nil : r.b2.code
             if let k1 = k1 {

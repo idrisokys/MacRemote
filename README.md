@@ -48,6 +48,15 @@ Uygulama menü çubuğunda bir kumanda ikonuyla çalışır. Pencereyi kapatsan 
 
 Atama modundayken kumandadaki tuşlar atamalarını çalıştırmaz, böylece kutuları doldururken yanlışlıkla işlem tetiklenmez.
 
+## Fare modu
+Her satırdaki açılır menüden klavye tuşu yerine bir **fare eylemi** seçebilirsin:
+sol tık, sağ tık, orta tık, çift tık, tekerlek yukarı/aşağı ve imleci yukarı/aşağı/sola/sağa hareket ettirme.
+
+- **İmleç hızı** ve **Tekerlek hızı** çubuklarıyla hızı ayarlarsın (imleç için piksel/kare değeridir).
+- Hareket ve tekerlek tuşu basılı tutulduğu sürece devam eder ve ilk 0,7 saniyede yavaştan hızlıya kademeli hızlanır, böylece küçük hareketler de yapabilirsin.
+- Tekerlek yönü ters çalışıyorsa (macOS'un "Doğal kaydırma" ayarı yüzünden) yukarı/aşağı atamalarını yer değiştir.
+- Kumanda tuşu bırakma sinyali göndermezse hareket en geç 3 saniye sonra durur.
+
 ## Nasıl çalışıyor
 Kumandalar çoğu zaman tuşları klavye olarak değil HID medya/tüketici sinyali olarak gönderir. Bu uygulama IOKit HID ile doğrudan cihazı dinler, bu yüzden Mac klavyesi etkilenmez (Apple cihazları yok sayılır). Atanan tuşlar `CGEvent` ile sisteme gönderilir.
 
