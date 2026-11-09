@@ -48,6 +48,14 @@ Uygulama menü çubuğunda bir kumanda ikonuyla çalışır. Pencereyi kapatsan 
 
 Atama modundayken kumandadaki tuşlar atamalarını çalıştırmaz, böylece kutuları doldururken yanlışlıkla işlem tetiklenmez.
 
+## Profiller (basılı tutunca ikinci profil)
+Kumandada bir tuşu **profil tuşu** olarak seçersen, o tuşu basılı tuttuğun sürece **Profil 2** atamaları çalışır. Bırakınca **Profil 1**'e dönülür (örneğin ok tuşları normalde imleci oynatırken, profil tuşu basılıyken tekerleği çevirir).
+
+1. Pencerede **Profil tuşu** satırındaki düğmeye tıkla ve kumandada profil tuşu olacak tuşa bas.
+2. Atama listesinin üstündeki **Profil 1 / Profil 2** seçiciyle düzenlediğin profili değiştir. **Atamayı başlat** modunda kumandada bastığın tuşlar seçili profile eklenir.
+3. Profil tuşu, başka tuşa basmadan kısa basılıp bırakılırsa Profil 1'deki kendi atamasını çalıştırır (atanmışsa).
+4. Kumanda bırakma sinyali göndermezse profil en geç 10 saniye sonra kapanır.
+
 ## Fare modu
 Her satırdaki açılır menüden klavye tuşu yerine bir **fare eylemi** seçebilirsin:
 sol tık, sağ tık, orta tık, çift tık, tekerlek yukarı/aşağı ve imleci yukarı/aşağı/sola/sağa hareket ettirme.

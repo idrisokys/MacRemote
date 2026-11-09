@@ -3,7 +3,7 @@ import IOKit.hid
 import UniformTypeIdentifiers
 
 // ---------- Veri ----------
-struct Mapping: Codable { var device: String; var page: Int; var usage: Int; var k1: Int; var k2: Int?; var mouse: String?; var app: String? }
+struct Mapping: Codable { var device: String; var page: Int; var usage: Int; var k1: Int; var k2: Int?; var mouse: String?; var app: String?; var layer: Int? }
 
 let modFlag: [Int: CGEventFlags] = [
     54: .maskCommand, 55: .maskCommand, 56: .maskShift, 60: .maskShift,
@@ -230,6 +230,7 @@ final class KeyBox: NSButton {
 // ---------- Satır ----------
 final class Row {
     let device: String, page: Int, usage: Int
+    let layer: Int
     var mouse: String?
     var appPath: String? { didSet { refreshAppTitle() } }
     let label: NSTextField
@@ -239,11 +240,11 @@ final class Row {
     let plus = NSTextField(labelWithString: "+")
     let del = NSButton(title: "Sil", target: nil, action: nil)
     let view: NSStackView
-    var key: String { "\(device)|\(page)|\(usage)" }
+    var key: String { "\(device)|\(page)|\(usage)|\(layer)" }
     var isEmpty: Bool { b1.code == nil && b2.code == nil && mouse == nil }
 
-    init(device: String, page: Int, usage: Int, k1: Int?, k2: Int?, mouse: String? = nil, appPath: String? = nil) {
-        self.device = device; self.page = page; self.usage = usage; self.mouse = mouse
+    init(device: String, page: Int, usage: Int, k1: Int?, k2: Int?, mouse: String? = nil, appPath: String? = nil, layer: Int = 0) {
+        self.device = device; self.page = page; self.usage = usage; self.mouse = mouse; self.layer = layer
         label = NSTextField(labelWithString: "\(device) · \(sourceName(page, usage))")
         label.widthAnchor.constraint(equalToConstant: 190).isActive = true
         label.lineBreakMode = .byTruncatingTail
@@ -280,6 +281,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var rows: [Row] = []
     var table: [String: Mapping] = [:]
     var assigning = false
+    var editLayer = 0
+    var layerKey: String? = UserDefaults.standard.string(forKey: "layerKey")
+    var layerActive = false, layerUsed = false, pickingLayer = false
+    var layerLast = Date()
+    let layerBtn = NSButton(title: "Seç…", target: nil, action: nil)
+    let layerClear = NSButton(title: "Kaldır", target: nil, action: nil)
+    let seg = NSSegmentedControl(labels: ["Profil 1 (normal)", "Profil 2 (profil tuşu basılıyken)"],
+                                 trackingMode: .selectOne, target: nil, action: nil)
     var hidErr: IOReturn = 0
     let moveLbl = NSTextField(labelWithString: "")
     let scrollLbl = NSTextField(labelWithString: "")
@@ -306,7 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applyFilter() {
-        for r in rows { r.view.isHidden = (selected != nil && r.device != selected) }
+        for r in rows { r.view.isHidden = (selected != nil && r.device != selected) || r.layer != editLayer }
     }
 
     func clearEmpty() {
@@ -324,8 +333,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hint = NSTextField(wrappingLabelWithString:
             "1) “Atamayı başlat”a bas, kumandada bir tuşa bas: satırı belirir.\n" +
             "2) Klavye tuşu için kutulara tıkla ve tuş bas (iki kutu = 1. tuş basılı tutulup 2. tuşa basılır, ör. ⌘ + V).\n" +
-            "3) Fare için açılır menüden tıklama, tekerlek veya imleç hareketi seç.\n" +
-            "4) Bitince “Atamayı bitir”e bas. Bundan sonra yalnızca atanmış tuşlar çalışır.")
+            "3) Fare veya uygulama için açılır menüden seçim yap.\n" +
+            "4) Profil tuşu: seçtiğin tuşu basılı tutarken Profil 2 atamaları çalışır, bırakınca Profil 1'e dönülür.\n" +
+            "5) Bitince “Atamayı bitir”e bas. Bundan sonra yalnızca atanmış tuşlar çalışır.")
         hint.widthAnchor.constraint(equalToConstant: 720).isActive = true
 
         popup.addItem(withTitle: "Tüm cihazlar (Apple hariç)")
@@ -345,14 +355,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let moveRow = speedRow("İmleç hızı:", 1, 40, moveSpeed, #selector(moveSpeedChanged(_:)), moveLbl)
         let scrollRow = speedRow("Tekerlek hızı:", 1, 80, scrollSpeed, #selector(scrollSpeedChanged(_:)), scrollLbl)
 
+        layerBtn.target = self; layerBtn.action = #selector(pickLayerTapped)
+        layerClear.target = self; layerClear.action = #selector(clearLayer)
+        layerBtn.bezelStyle = .rounded; layerClear.bezelStyle = .rounded
+        layerBtn.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        let layerRow = NSStackView(views: [NSTextField(labelWithString: "Profil tuşu:"), layerBtn, layerClear])
+        layerRow.spacing = 8
+        seg.target = self; seg.action = #selector(segChanged)
+        seg.selectedSegment = 0
+        updateLayerUI()
+
         assignBtn.target = self; assignBtn.action = #selector(toggleAssign)
         assignBtn.bezelStyle = .rounded; assignBtn.controlSize = .large
-        let root = NSStackView(views: [perm, assignBtn, devRow, moveRow, scrollRow, hint, last, list])
+        let root = NSStackView(views: [perm, assignBtn, devRow, moveRow, scrollRow, layerRow, hint, last, seg, list])
         root.orientation = .vertical; root.alignment = .leading; root.spacing = 14
         root.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         list.orientation = .vertical; list.alignment = .leading; list.spacing = 8
 
-        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 600),
+        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 700),
                        styleMask: [.titled, .closable], backing: .buffered, defer: false)
         win.title = "Kumanda Ayar"
         win.isReleasedWhenClosed = false
@@ -364,7 +384,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            let saved = try? JSONDecoder().decode([Mapping].self, from: d) {
             for m in saved { addRow(Row(device: m.device, page: m.page, usage: m.usage,
                                         k1: m.mouse == nil ? m.k1 : nil, k2: m.k2,
-                                        mouse: m.mouse, appPath: m.app)) }
+                                        mouse: m.mouse, appPath: m.app, layer: m.layer ?? 0)) }
         }
         rebuildTable()
 
@@ -432,6 +452,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if chooseApp(for: row) { commit() }
     }
 
+    func updateLayerUI() {
+        if pickingLayer { layerBtn.title = "Kumandada bir tuşa bas…"; return }
+        if let k = layerKey {
+            let parts = k.split(separator: "|").map(String.init)
+            if parts.count >= 3, let pg = Int(parts[1]), let us = Int(parts[2]) {
+                layerBtn.title = "\(parts[0]) · \(sourceName(pg, us))"
+                return
+            }
+        }
+        layerBtn.title = "Seç… (kumandada bir tuşa bas)"
+    }
+
+    @objc func pickLayerTapped() { pickingLayer = true; updateLayerUI() }
+
+    @objc func clearLayer() {
+        layerKey = nil; layerActive = false; pickingLayer = false
+        UserDefaults.standard.removeObject(forKey: "layerKey")
+        updateLayerUI()
+    }
+
+    @objc func segChanged() { editLayer = seg.selectedSegment; applyFilter() }
+
     func refreshPerm() {
         let ax = AXIsProcessTrusted(), im = CGPreflightListenEventAccess()
         perm.stringValue = "Erişilebilirlik: \(ax ? "VAR ✅" : "YOK ❌")   Giriş İzleme: \(im ? "VAR ✅" : "YOK ❌")"
@@ -446,7 +488,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func toggleAssign() {
         assigning.toggle()
-        Hold.stop()
+        Hold.stop(); layerActive = false; pickingLayer = false; updateLayerUI()
         activeBox?.refresh(); activeBox = nil
         if !assigning { clearEmpty(); commit() }
         updateModeUI()
@@ -487,28 +529,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
-    func handle(_ dev: String, _ page: Int, _ usage: Int, _ down: Bool) {
-        if let s = selected, dev != s { return }
-        let key = "\(dev)|\(page)|\(usage)"
-        if assigning {
-            // Atama modu: yeni tuşlar için satır oluştur, atamaları çalıştırma
-            guard down else { return }
-            last.stringValue = "Son sinyal: \(dev) · \(sourceName(page, usage))"
-            if let row = rows.first(where: { $0.key == key }) { row.flash() }
-            else { addRow(Row(device: dev, page: page, usage: usage, k1: nil, k2: nil)) }
-            return
-        }
-        // Normal mod: yalnızca atanmış tuşlar çalışır, başka hiçbir şey eklenmez
-        guard let m = table[key] else { return }
+    func execute(_ m: Mapping, _ base: String, _ down: Bool) {
         if let mo = m.mouse {
             switch mo {
             case "app": if down, let path = m.app { openApp(path) }
             case "left", "right", "middle", "double": if down { mouseClick(mo) }
-            default: if down { Hold.press(key, mo) } else { Hold.release(key) }
+            default: if down { Hold.press(base, mo) } else { Hold.release(base) }
             }
             return
         }
         if down { performMapping(m) }
+    }
+
+    func handle(_ dev: String, _ page: Int, _ usage: Int, _ down: Bool) {
+        if let s = selected, dev != s { return }
+        let base = "\(dev)|\(page)|\(usage)"
+
+        // Profil tuşunu seçme
+        if pickingLayer {
+            guard down else { return }
+            layerKey = base; pickingLayer = false
+            UserDefaults.standard.set(base, forKey: "layerKey")
+            updateLayerUI()
+            return
+        }
+
+        // Atama modu: yeni tuşlar için satır oluştur, atamaları çalıştırma
+        if assigning {
+            guard down else { return }
+            let key = base + "|\(editLayer)"
+            last.stringValue = "Son sinyal: \(dev) · \(sourceName(page, usage))"
+            if let row = rows.first(where: { $0.key == key }) { row.flash() }
+            else { addRow(Row(device: dev, page: page, usage: usage, k1: nil, k2: nil, layer: editLayer)) }
+            return
+        }
+
+        let now = Date()
+        // Profil tuşu: basılıyken Profil 2, bırakınca Profil 1
+        if base == layerKey {
+            if down {
+                if !layerActive { layerActive = true; layerUsed = false }
+                layerLast = now
+            } else if layerActive {
+                layerActive = false
+                // Başka tuşa basılmadıysa profil tuşunun kendi (Profil 1) atamasını çalıştır
+                if !layerUsed, let m = table[base + "|0"] {
+                    execute(m, base, true); execute(m, base, false)
+                }
+            }
+            return
+        }
+
+        if layerActive && now.timeIntervalSince(layerLast) > 10 { layerActive = false } // bırakma sinyali kaçarsa güvenlik
+        if layerActive { layerLast = now }
+        if !down { Hold.release(base); return }
+        if layerActive { layerUsed = true }
+        guard let m = table[base + "|\(layerActive ? 1 : 0)"] else { return }
+        execute(m, base, true)
     }
 
     func addRow(_ row: Row) {
@@ -538,13 +615,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let mo = r.mouse {
                 if mo == "app" && r.appPath == nil { continue }
                 table[r.key] = Mapping(device: r.device, page: r.page, usage: r.usage, k1: -1, k2: nil,
-                                       mouse: mo, app: r.appPath)
+                                       mouse: mo, app: r.appPath, layer: r.layer)
                 continue
             }
             let k1 = r.b1.code ?? r.b2.code
             let k2 = r.b1.code == nil ? nil : r.b2.code
             if let k1 = k1 {
-                table[r.key] = Mapping(device: r.device, page: r.page, usage: r.usage, k1: k1, k2: k2)
+                table[r.key] = Mapping(device: r.device, page: r.page, usage: r.usage, k1: k1, k2: k2, layer: r.layer)
             }
         }
     }
