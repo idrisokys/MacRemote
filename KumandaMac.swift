@@ -90,6 +90,7 @@ let mouseOptions: [(String, String)] = [
     ("app", "🚀 Uygulama aç")
 ]
 var moveSpeed: Double = UserDefaults.standard.object(forKey: "moveSpeed") as? Double ?? 12
+var holdTime: Double = UserDefaults.standard.object(forKey: "holdTime") as? Double ?? 0.3
 var scrollSpeed: Double = UserDefaults.standard.object(forKey: "scrollSpeed") as? Double ?? 20
 
 func cursorPos() -> CGPoint { CGEvent(source: nil)?.location ?? .zero }
@@ -283,11 +284,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var assigning = false
     var editLayer = 0
     var layerKey: String? = UserDefaults.standard.string(forKey: "layerKey")
-    var layerActive = false, layerUsed = false, pickingLayer = false
-    var layerLast = Date()
+    var layerActive = false, layerDown = false, layerFired = false, pickingLayer = false
+    var layerTimer: Timer?
+    let holdLbl = NSTextField(labelWithString: "")
+    let profLbl = NSTextField(labelWithString: "Aktif profil: Profil 1")
     let layerBtn = NSButton(title: "Seç…", target: nil, action: nil)
     let layerClear = NSButton(title: "Kaldır", target: nil, action: nil)
-    let seg = NSSegmentedControl(labels: ["Profil 1 (normal)", "Profil 2 (profil tuşu basılıyken)"],
+    let seg = NSSegmentedControl(labels: ["Profil 1 (normal)", "Profil 2 (profil tuşuna uzun basınca)"],
                                  trackingMode: .selectOne, target: nil, action: nil)
     var hidErr: IOReturn = 0
     let moveLbl = NSTextField(labelWithString: "")
@@ -334,7 +337,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "1) “Atamayı başlat”a bas, kumandada bir tuşa bas: satırı belirir.\n" +
             "2) Klavye tuşu için kutulara tıkla ve tuş bas (iki kutu = 1. tuş basılı tutulup 2. tuşa basılır, ör. ⌘ + V).\n" +
             "3) Fare veya uygulama için açılır menüden seçim yap.\n" +
-            "4) Profil tuşu: seçtiğin tuşu basılı tutarken Profil 2 atamaları çalışır, bırakınca Profil 1'e dönülür.\n" +
+            "4) Profil tuşu: seçtiğin tuşa basılı tutunca (gecikme çubuğu 0 ise basar basmaz) Profil 2'ye geçilir ve orada kalınır, tekrar basılı tutunca Profil 1'e dönülür.\n" +
             "5) Bitince “Atamayı bitir”e bas. Bundan sonra yalnızca atanmış tuşlar çalışır.")
         hint.widthAnchor.constraint(equalToConstant: 720).isActive = true
 
@@ -359,6 +362,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         layerClear.target = self; layerClear.action = #selector(clearLayer)
         layerBtn.bezelStyle = .rounded; layerClear.bezelStyle = .rounded
         layerBtn.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        let holdRow = speedRow("Geçiş gecikmesi:", 0.0, 2.0, holdTime, #selector(holdTimeChanged(_:)), holdLbl)
+        holdLbl.stringValue = holdTime <= 0.05 ? "anında" : String(format: "%.1f sn", holdTime)
         let layerRow = NSStackView(views: [NSTextField(labelWithString: "Profil tuşu:"), layerBtn, layerClear])
         layerRow.spacing = 8
         seg.target = self; seg.action = #selector(segChanged)
@@ -367,12 +372,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         assignBtn.target = self; assignBtn.action = #selector(toggleAssign)
         assignBtn.bezelStyle = .rounded; assignBtn.controlSize = .large
-        let root = NSStackView(views: [perm, assignBtn, devRow, moveRow, scrollRow, layerRow, hint, last, seg, list])
+        let root = NSStackView(views: [perm, assignBtn, devRow, moveRow, scrollRow, layerRow, holdRow, hint, last, profLbl, seg, list])
         root.orientation = .vertical; root.alignment = .leading; root.spacing = 14
         root.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         list.orientation = .vertical; list.alignment = .leading; list.spacing = 8
 
-        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 700),
+        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 760),
                        styleMask: [.titled, .closable], backing: .buffered, defer: false)
         win.title = "Kumanda Ayar"
         win.isReleasedWhenClosed = false
@@ -452,6 +457,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if chooseApp(for: row) { commit() }
     }
 
+    func updateStatusTitle() {
+        statusItem?.button?.title = (assigning ? " ●" : "") + (layerActive ? " ②" : "")
+    }
+
+    func updateProfileUI() {
+        profLbl.stringValue = layerActive ? "Aktif profil: Profil 2" : "Aktif profil: Profil 1"
+        updateStatusTitle()
+    }
+
+    func setProfile(_ n: Int) {
+        layerActive = (n == 1)
+        updateProfileUI()
+        NSSound(named: "Pop")?.play()
+    }
+
+    @objc func switchProfile() { setProfile(layerActive ? 0 : 1) }
+
+    @objc func holdTimeChanged(_ sl: NSSlider) {
+        holdTime = (sl.doubleValue * 10).rounded() / 10
+        holdLbl.stringValue = holdTime <= 0.05 ? "anında" : String(format: "%.1f sn", holdTime)
+        UserDefaults.standard.set(holdTime, forKey: "holdTime")
+    }
+
     func updateLayerUI() {
         if pickingLayer { layerBtn.title = "Kumandada bir tuşa bas…"; return }
         if let k = layerKey {
@@ -467,7 +495,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func pickLayerTapped() { pickingLayer = true; updateLayerUI() }
 
     @objc func clearLayer() {
-        layerKey = nil; layerActive = false; pickingLayer = false
+        layerKey = nil; layerActive = false; pickingLayer = false; updateProfileUI()
         UserDefaults.standard.removeObject(forKey: "layerKey")
         updateLayerUI()
     }
@@ -488,7 +516,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func toggleAssign() {
         assigning.toggle()
-        Hold.stop(); layerActive = false; pickingLayer = false; updateLayerUI()
+        Hold.stop(); layerActive = false; pickingLayer = false; updateLayerUI(); updateProfileUI()
         activeBox?.refresh(); activeBox = nil
         if !assigning { clearEmpty(); commit() }
         updateModeUI()
@@ -497,7 +525,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func updateModeUI() {
         assignBtn.title = assigning ? "⏹ Atamayı bitir" : "▶︎ Atamayı başlat"
         toggleItem.title = assigning ? "Atamayı bitir" : "Atamayı başlat"
-        statusItem.button?.title = assigning ? " ●" : ""
+        updateStatusTitle()
         last.stringValue = assigning ? "Atama açık: kumandada bir tuşa bas."
                                      : "Atama kapalı. Yalnızca atanmış tuşlar çalışır."
     }
@@ -525,7 +553,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let show = NSMenuItem(title: "Pencereyi aç", action: #selector(showWindow), keyEquivalent: "")
         show.target = self
         let quit = NSMenuItem(title: "Çıkış", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(toggleItem); menu.addItem(show); menu.addItem(.separator()); menu.addItem(quit)
+        let prof = NSMenuItem(title: "Profili değiştir", action: #selector(switchProfile), keyEquivalent: "")
+        prof.target = self
+        menu.addItem(toggleItem); menu.addItem(prof); menu.addItem(show); menu.addItem(.separator()); menu.addItem(quit)
         statusItem.menu = menu
     }
 
@@ -564,26 +594,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let now = Date()
-        // Profil tuşu: basılıyken Profil 2, bırakınca Profil 1
+        // Profil tuşu: uzun basınca profil değişir ve kalır; kısa basış kendi atamasını çalıştırır
         if base == layerKey {
             if down {
-                if !layerActive { layerActive = true; layerUsed = false }
-                layerLast = now
-            } else if layerActive {
-                layerActive = false
-                // Başka tuşa basılmadıysa profil tuşunun kendi (Profil 1) atamasını çalıştır
-                if !layerUsed, let m = table[base + "|0"] {
+                if layerDown { return } // tekrar eden sinyalleri yok say
+                layerDown = true; layerFired = false
+                layerTimer?.invalidate()
+                if holdTime <= 0.05 {   // gecikme 0: tuşa basar basmaz geç
+                    layerFired = true
+                    setProfile(layerActive ? 0 : 1)
+                    return
+                }
+                let t = Timer(timeInterval: holdTime, repeats: false) { [weak self] _ in
+                    guard let self = self, self.layerDown else { return }
+                    self.layerFired = true
+                    self.setProfile(self.layerActive ? 0 : 1)
+                }
+                RunLoop.main.add(t, forMode: .common)
+                layerTimer = t
+            } else {
+                layerTimer?.invalidate(); layerTimer = nil
+                let wasDown = layerDown
+                layerDown = false
+                if wasDown && !layerFired, let m = table[base + "|\(layerActive ? 1 : 0)"] {
                     execute(m, base, true); execute(m, base, false)
                 }
             }
             return
         }
 
-        if layerActive && now.timeIntervalSince(layerLast) > 10 { layerActive = false } // bırakma sinyali kaçarsa güvenlik
-        if layerActive { layerLast = now }
         if !down { Hold.release(base); return }
-        if layerActive { layerUsed = true }
         guard let m = table[base + "|\(layerActive ? 1 : 0)"] else { return }
         execute(m, base, true)
     }
