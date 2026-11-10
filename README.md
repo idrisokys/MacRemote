@@ -41,9 +41,9 @@ Uygulama **ikon modunda** çalışır: Dock'ta görünmez, yalnızca menü çubu
 
 1. Kumandayı Mac'e Bluetooth ile eşleştir.
 2. Pencerede **Atamayı başlat**'a bas. Atama sırasında ikonun yanında ● görünür.
-3. Kumandada bir tuşa bas, pencerede o tuşun kartı belirir.
-4. Kartta **ilk kutuya** tıkla ve klavyeden bir tuş bas. Tek kutu doluysa kumanda tuşu o tuş gibi çalışır.
-5. **İkinci kutuya** da tıklayıp bir tuş basarsan 1. tuş basılı tutulup 2. tuşa basılır. Örnek: 1. kutu `⌘ Command`, 2. kutu `V` → **Yapıştır**.
+3. Kumandada bir tuşa bas, pencerede o tuşun satırı belirir. Satırda yalnızca tuş kodu (sayfa:kullanım, ör. `0C:CD`) görünür.
+4. Kodun yanındaki **3 kutudan ilkine** tıkla ve klavyeden bir tuş bas. Tek kutu doluysa kumanda tuşu o tuş gibi çalışır.
+5. **2. ve 3. kutuyu** da doldurursan tuşlar sırayla basılır (⌘ ⇧ ⌥ ⌃ fn basılı kalır). Örnek: `⌘`, `⇧`, `4` → **Ekran görüntüsü (alan)**; `⌘`, `V` → **Yapıştır**. Boş kutular atlanır.
 6. İşin bitince **Atamayı bitir**'e bas. Boş kartlar silinir ve bundan sonra yalnızca atanan tuşlar çalışır.
 
 Atama modundayken kumandadaki tuşlar atamalarını çalıştırmaz, böylece kutuları doldururken yanlışlıkla işlem tetiklenmez.
@@ -55,7 +55,7 @@ Atama modundayken kumandadaki tuşlar atamalarını çalıştırmaz, böylece ku
 - Profil tuşu yalnızca profil değiştirir, ona ayrıca eylem atanmaz.
 
 ## Fare modu
-Her satırdaki açılır menüden klavye tuşu yerine bir **fare eylemi** seçebilirsin:
+Her satırdaki **⋯** menüsünden klavye tuşu yerine bir **fare eylemi** seçebilirsin:
 sol tık, sağ tık, orta tık, çift tık, tekerlek yukarı/aşağı ve imleci yukarı/aşağı/sola/sağa hareket ettirme.
 
 **Kaydırma (TikTok / Instagram Reels vb.):** menüden **📱 Aşağı kaydır**, **📱 Yukarı kaydır**, **📱 Sağa kaydır** veya **📱 Sola kaydır** seçersen tuşa her basışta tek vuruşluk bir kaydırma (tekerlek olayı) yapılır. Mesafeyi **Yukarı/aşağı kaydırma** ve **Sağa/sola kaydırma** çubuklarıyla ayrı ayrı ayarlarsın (varsayılan 120; 1–1000 arası). Yön ters çıkarsa iki seçeneğin atamalarını yer değiştir.
@@ -77,6 +77,11 @@ Kumandalar çoğu zaman tuşları klavye olarak değil HID medya/tüketici sinya
 - Tuş basılı tutulunca tekrarlamaz, her basış tek vuruştur.
 - Atamalar yalnızca uygulama çalışırken (menü çubuğunda göründüğü sürece) geçerlidir. Çıkış yapınca atamalar çalışmaz.
 - Harici (Apple dışı) Bluetooth klavyeler de satır olarak görünür.
+
+## Dil / Language
+Sistem dili Türkçe ise arayüz Türkçe, diğer tüm dillerde İngilizce açılır. / The UI is Turkish when the system language is Turkish, English for every other language.
+
+**English quick guide:** click the menu-bar icon to open the window (it hides when you click elsewhere; click the icon again to reopen). Press *Start assigning*, press a key on the remote to add a row (only its code is shown), then fill up to 3 boxes next to it with the keyboard keys to send (e.g. `⌘`,`V`). The **⋯** menu on each row picks mouse, swipe, gesture or app actions. Use *Quit* at the top right to exit.
 
 ## Lisans
 MIT, ayrıntılar için `LICENSE` dosyasına bak.

@@ -2,8 +2,13 @@ import Cocoa
 import IOKit.hid
 import UniformTypeIdentifiers
 
+// ---------- Dil ----------
+// Sistem dili Türkçe ise Türkçe, diğer tüm dillerde İngilizce
+let isTR = Locale.preferredLanguages.first?.lowercased().hasPrefix("tr") ?? false
+func L(_ tr: String, _ en: String) -> String { isTR ? tr : en }
+
 // ---------- Veri ----------
-struct Mapping: Codable { var device: String; var page: Int; var usage: Int; var k1: Int; var k2: Int?; var mouse: String?; var app: String?; var layer: Int?; var gesture: [[Double]]? }
+struct Mapping: Codable { var device: String; var page: Int; var usage: Int; var k1: Int; var k2: Int?; var mouse: String?; var app: String?; var layer: Int?; var gesture: [[Double]]?; var k3: Int? }
 
 enum Layout {
     static let w: CGFloat = 320          // pencere 350 px, kenarlarda 15 px boşluk
@@ -30,28 +35,39 @@ let modNSFlag: [Int: NSEvent.ModifierFlags] = [
     54: .command, 55: .command, 56: .shift, 60: .shift,
     58: .option, 61: .option, 59: .control, 62: .control, 63: .function]
 
+let rt = L("sağ", "right")
 let names: [Int: String] = [
     0:"A",11:"B",8:"C",2:"D",14:"E",3:"F",5:"G",4:"H",34:"I",38:"J",40:"K",37:"L",46:"M",
     45:"N",31:"O",35:"P",12:"Q",15:"R",1:"S",17:"T",32:"U",9:"V",13:"W",7:"X",16:"Y",6:"Z",
     18:"1",19:"2",20:"3",21:"4",23:"5",22:"6",26:"7",28:"8",25:"9",29:"0",
-    36:"Return",76:"Enter",53:"Esc",49:"Boşluk",48:"Tab",51:"Delete",117:"Sil (ileri)",
+    36:"Return",76:"Enter",53:"Esc",49:L("Boşluk","Space"),48:"Tab",51:"Delete",117:L("Sil (ileri)","Fwd Delete"),
     123:"←",124:"→",125:"↓",126:"↑",115:"Home",119:"End",116:"PageUp",121:"PageDown",
     122:"F1",120:"F2",99:"F3",118:"F4",96:"F5",97:"F6",98:"F7",100:"F8",101:"F9",109:"F10",103:"F11",111:"F12",
-    55:"⌘ Command",54:"⌘ Command (sağ)",56:"⇧ Shift",60:"⇧ Shift (sağ)",
-    58:"⌥ Option",61:"⌥ Option (sağ)",59:"⌃ Control",62:"⌃ Control (sağ)",63:"fn",
+    55:"⌘ Command",54:"⌘ Command (\(rt))",56:"⇧ Shift",60:"⇧ Shift (\(rt))",
+    58:"⌥ Option",61:"⌥ Option (\(rt))",59:"⌃ Control",62:"⌃ Control (\(rt))",63:"fn",
     43:",",47:".",44:"/",41:";",39:"'",33:"[",30:"]",42:"\\",27:"-",24:"=",50:"`"
 ]
-func keyName(_ c: Int) -> String { names[c] ?? "Tuş#\(c)" }
+func keyName(_ c: Int) -> String { names[c] ?? L("Tuş#", "Key#") + "\(c)" }
+
+// Tuş kutusunda az yer kaplaması için kısa gösterim (değiştirici tuşlar yalnızca simge)
+func keyShort(_ c: Int) -> String {
+    let n = keyName(c)
+    guard modFlag[c] != nil else { return n }
+    let sym = String(n.prefix(while: { $0 != " " }))
+    return [54, 60, 61, 62].contains(c) ? sym + "ᴿ" : sym
+}
 
 let consumerNames: [Int: String] = [
-    0x40:"Menü", 0x41:"Tamam (OK)", 0x42:"Yukarı", 0x43:"Aşağı", 0x44:"Sol", 0x45:"Sağ", 0x46:"Menü Çıkış",
-    0x223:"Home", 0x224:"Geri", 0x30:"Güç", 0xE9:"Ses +", 0xEA:"Ses −", 0xE2:"Sessiz",
-    0xCD:"Oynat/Duraklat", 0xB5:"Sonraki", 0xB6:"Önceki"
+    0x40:L("Menü","Menu"), 0x41:L("Tamam (OK)","OK"), 0x42:L("Yukarı","Up"), 0x43:L("Aşağı","Down"), 0x44:L("Sol","Left"), 0x45:L("Sağ","Right"), 0x46:L("Menü Çıkış","Menu Exit"),
+    0x223:"Home", 0x224:L("Geri","Back"), 0x30:L("Güç","Power"), 0xE9:L("Ses +","Vol +"), 0xEA:L("Ses −","Vol −"), 0xE2:L("Sessiz","Mute"),
+    0xCD:L("Oynat/Duraklat","Play/Pause"), 0xB5:L("Sonraki","Next"), 0xB6:L("Önceki","Previous")
 ]
 func sourceName(_ page: Int, _ usage: Int) -> String {
     if page == 0x0C, let n = consumerNames[usage] { return "\(n) (0x\(String(usage, radix: 16)))" }
-    return "Tuş (sayfa 0x\(String(page, radix: 16)), kullanım 0x\(String(usage, radix: 16)))"
+    return L("Tuş", "Key") + " (" + codeLabel(page, usage) + ")"
 }
+// Satırda yalnızca kod görünür: sayfa:kullanım (hex)
+func codeLabel(_ page: Int, _ usage: Int) -> String { String(format: "%02X:%X", page, usage) }
 
 // ---------- Ayarlar (çubuk + sayı kutusu) ----------
 final class Setting: NSObject {
@@ -93,10 +109,10 @@ final class Setting: NSObject {
     @objc private func fieldEdited() { apply(Double(field.integerValue)) }
 }
 
-let moveSpeed   = Setting("moveSpeed", "İmleç hızı", 1, 40, 12)
-let scrollSpeed = Setting("scrollSpeed", "Tekerlek hızı", 1, 80, 20)
-let swipeV      = Setting("swipeAmountV2", "Yukarı/aşağı kaydırma", 1, 1000, 120)
-let swipeH      = Setting("swipeAmountHV2", "Sağa/sola kaydırma", 1, 1000, 120)
+let moveSpeed   = Setting("moveSpeed", L("İmleç hızı", "Cursor speed"), 1, 40, 12)
+let scrollSpeed = Setting("scrollSpeed", L("Tekerlek hızı", "Wheel speed"), 1, 80, 20)
+let swipeV      = Setting("swipeAmountV2", L("Yukarı/aşağı kaydırma", "Swipe up/down"), 1, 1000, 120)
+let swipeH      = Setting("swipeAmountHV2", L("Sağa/sola kaydırma", "Swipe left/right"), 1, 1000, 120)
 
 // ---------- Tuş gönderme ----------
 let hidSource = CGEventSource(stateID: .hidSystemState)   // tek kez oluşturulur, her olayda yeniden kurulmaz
@@ -124,13 +140,20 @@ func postKey(_ code: Int, down: Bool, flags: CGEventFlags) {
 }
 
 func performMapping(_ m: Mapping) {
-    let f: CGEventFlags = modFlag[m.k1] ?? []
-    var steps: [() -> Void] = [{ postKey(m.k1, down: true, flags: f) }]
-    if let k2 = m.k2 {
-        steps.append { postKey(k2, down: true, flags: f) }
-        steps.append { postKey(k2, down: false, flags: f) }
+    // En çok 3 tuş: sırayla basılır (değiştirici tuşlar basılı kalır), ters sırayla bırakılır
+    let codes = [m.k1, m.k2, m.k3].compactMap { $0 }
+    var flags: CGEventFlags = []
+    var steps: [() -> Void] = []
+    for c in codes {
+        if let f = modFlag[c] { flags.insert(f) }
+        let fl = flags
+        steps.append { postKey(c, down: true, flags: fl) }
     }
-    steps.append { postKey(m.k1, down: false, flags: []) }
+    for c in codes.reversed() {
+        if let f = modFlag[c] { flags.remove(f) }
+        let fl = flags
+        steps.append { postKey(c, down: false, flags: fl) }
+    }
     for (i, st) in steps.enumerated() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.012 * Double(i), execute: st)
     }
@@ -146,15 +169,16 @@ func appName(_ path: String) -> String {
 
 // ---------- Fare ----------
 let mouseOptions: [(String, String)] = [
-    ("", "Klavye tuşu"),
-    ("left", "🖱 Sol tık"), ("right", "🖱 Sağ tık"), ("middle", "🖱 Orta tık"), ("double", "🖱 Çift tık"),
-    ("scrollUp", "🖱 Tekerlek yukarı"), ("scrollDown", "🖱 Tekerlek aşağı"),
-    ("videoNext", "📱 Aşağı kaydır"), ("videoPrev", "📱 Yukarı kaydır"),
-    ("swipeRight", "📱 Sağa kaydır"), ("swipeLeft", "📱 Sola kaydır"),
-    ("gesture", "✍️ Hareket çiz"),
-    ("moveUp", "🖱 İmleç yukarı"), ("moveDown", "🖱 İmleç aşağı"),
-    ("moveLeft", "🖱 İmleç sola"), ("moveRight", "🖱 İmleç sağa"),
-    ("app", "🚀 Uygulama aç")
+    ("", L("Klavye tuşu", "Keyboard key")),
+    ("left", L("🖱 Sol tık", "🖱 Left click")), ("right", L("🖱 Sağ tık", "🖱 Right click")),
+    ("middle", L("🖱 Orta tık", "🖱 Middle click")), ("double", L("🖱 Çift tık", "🖱 Double click")),
+    ("scrollUp", L("🖱 Tekerlek yukarı", "🖱 Wheel up")), ("scrollDown", L("🖱 Tekerlek aşağı", "🖱 Wheel down")),
+    ("videoNext", L("📱 Aşağı kaydır", "📱 Swipe down")), ("videoPrev", L("📱 Yukarı kaydır", "📱 Swipe up")),
+    ("swipeRight", L("📱 Sağa kaydır", "📱 Swipe right")), ("swipeLeft", L("📱 Sola kaydır", "📱 Swipe left")),
+    ("gesture", L("✍️ Hareket çiz", "✍️ Draw gesture")),
+    ("moveUp", L("🖱 İmleç yukarı", "🖱 Cursor up")), ("moveDown", L("🖱 İmleç aşağı", "🖱 Cursor down")),
+    ("moveLeft", L("🖱 İmleç sola", "🖱 Cursor left")), ("moveRight", L("🖱 İmleç sağa", "🖱 Cursor right")),
+    ("app", L("🚀 Uygulama aç", "🚀 Open app"))
 ]
 
 func cursorPos() -> CGPoint { CGEvent(source: nil)?.location ?? .zero }
@@ -290,7 +314,7 @@ final class GesturePad: NSView {
         NSColor.controlBackgroundColor.setFill(); bg.fill()
         NSColor.tertiaryLabelColor.setStroke(); bg.lineWidth = 2; bg.stroke()
         if viewPath.count < 2 {
-            let t = "Fareyi basılı tutup sürükleyerek hareketi çiz" as NSString
+            let t = L("Fareyi basılı tutup sürükleyerek hareketi çiz", "Hold the mouse button and drag to draw the gesture") as NSString
             let at: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.secondaryLabelColor]
             let sz = t.size(withAttributes: at)
             t.draw(at: NSPoint(x: bounds.midX - sz.width / 2, y: bounds.midY - sz.height / 2), withAttributes: at)
@@ -417,18 +441,22 @@ final class KeyBox: NSButton {
     var onChange: ((Int?) -> Void)?
     override init(frame f: NSRect) {
         super.init(frame: f)
-        bezelStyle = .rounded
+        bezelStyle = .rounded; controlSize = .small; font = .systemFont(ofSize: 11)
+        lineBreakMode = .byTruncatingTail
         target = self; action = #selector(begin)
-        widthAnchor.constraint(equalToConstant: 125).isActive = true
+        widthAnchor.constraint(equalToConstant: 62).isActive = true
         refresh()
     }
     required init?(coder: NSCoder) { fatalError() }
-    func refresh() { title = code.map { keyName($0) } ?? "boş – tıkla" }
-    @objc func begin() { activeBox?.refresh(); activeBox = self; title = "Tuşa bas…" }
+    func refresh() {
+        title = code.map { keyShort($0) } ?? "–"
+        toolTip = code.map { keyName($0) } ?? L("Boş – tıkla ve bir tuşa bas", "Empty – click, then press a key")
+    }
+    @objc func begin() { activeBox?.refresh(); activeBox = self; title = "…" }
     func set(_ c: Int) { code = c; onChange?(c) }
 }
 
-// ---------- Satır (350 px pencereye göre dikey kart) ----------
+// ---------- Satır (kompakt: kod + 3 tuş kutusu tek satırda) ----------
 final class Row {
     let device: String, page: Int, usage: Int
     let layer: Int
@@ -436,48 +464,55 @@ final class Row {
     var gesture: [[Double]]? { didSet { refreshTitles() } }
     var appPath: String? { didSet { refreshTitles() } }
     let label: NSTextField
-    let act = NSPopUpButton(frame: .zero, pullsDown: false)
-    let appBtn = NSButton(title: "Uygulama seç…", target: nil, action: nil)
-    let gestureBtn = NSButton(title: "✍️ Hareket çiz…", target: nil, action: nil)
-    let b1 = KeyBox(frame: .zero), b2 = KeyBox(frame: .zero)
-    let del = NSButton(title: "Sil", target: nil, action: nil)
+    let more = NSPopUpButton(frame: .zero, pullsDown: true)     // fare / kaydırma / uygulama eylemleri
+    let appBtn = NSButton(title: "", target: nil, action: nil)
+    let gestureBtn = NSButton(title: "", target: nil, action: nil)
+    let b1 = KeyBox(frame: .zero), b2 = KeyBox(frame: .zero), b3 = KeyBox(frame: .zero)
+    let del = NSButton(title: "✕", target: nil, action: nil)
+    let mouseLbl = NSTextField(labelWithString: "")
     let keys: NSStackView
     let view: NSStackView
     var key: String { "\(device)|\(page)|\(usage)|\(layer)" }
-    var isEmpty: Bool { b1.code == nil && b2.code == nil && mouse == nil }
+    var isEmpty: Bool { b1.code == nil && b2.code == nil && b3.code == nil && mouse == nil }
 
-    init(device: String, page: Int, usage: Int, k1: Int?, k2: Int?, mouse: String? = nil, appPath: String? = nil, layer: Int = 0, gesture: [[Double]]? = nil) {
+    init(device: String, page: Int, usage: Int, k1: Int?, k2: Int?, k3: Int? = nil, mouse: String? = nil, appPath: String? = nil, layer: Int = 0, gesture: [[Double]]? = nil) {
         self.device = device; self.page = page; self.usage = usage; self.mouse = mouse; self.layer = layer
-        let lbl = NSTextField(labelWithString: "\(device) · \(sourceName(page, usage))")
-        lbl.lineBreakMode = .byTruncatingTail
-        lbl.font = .systemFont(ofSize: 12, weight: .medium)
-        lbl.toolTip = lbl.stringValue
-        lbl.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        lbl.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let lbl = NSTextField(labelWithString: codeLabel(page, usage))
+        lbl.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+        lbl.toolTip = "\(device) · \(sourceName(page, usage))"
+        lbl.widthAnchor.constraint(equalToConstant: 46).isActive = true
         label = lbl
         del.bezelStyle = .rounded; del.controlSize = .small
-        b1.code = k1; b2.code = k2
-        for o in mouseOptions { act.addItem(withTitle: o.1) }
-        if let m = mouse, let i = mouseOptions.firstIndex(where: { $0.0 == m }) { act.selectItem(at: i) }
-        for b in [act, appBtn, gestureBtn] as [NSControl] { b.widthAnchor.constraint(equalToConstant: Layout.w).isActive = true }
-        appBtn.bezelStyle = .rounded; gestureBtn.bezelStyle = .rounded
-        let plus = NSTextField(labelWithString: "+")
-        keys = NSStackView(views: [b1, plus, b2]); keys.spacing = 8
-        let sep = NSBox(); sep.boxType = .separator
-        sep.widthAnchor.constraint(equalToConstant: Layout.w).isActive = true
-        view = NSStackView(views: [Layout.row([lbl, del]), act, keys, appBtn, gestureBtn, sep])
-        view.orientation = .vertical; view.alignment = .leading; view.spacing = 6
+        del.toolTip = L("Sil", "Delete")
+        del.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        b1.code = k1; b2.code = k2; b3.code = k3
+        more.controlSize = .small
+        more.addItem(withTitle: "⋯")
+        for (i, o) in mouseOptions.enumerated() { more.addItem(withTitle: o.1); more.lastItem?.tag = i }
+        more.toolTip = L("Fare / kaydırma / uygulama eylemi", "Mouse / swipe / app action")
+        more.widthAnchor.constraint(equalToConstant: 42).isActive = true
+        for b in [appBtn, gestureBtn] { b.bezelStyle = .rounded; b.controlSize = .small
+            b.widthAnchor.constraint(equalToConstant: Layout.w).isActive = true }
+        mouseLbl.font = .systemFont(ofSize: 11); mouseLbl.textColor = .secondaryLabelColor
+        keys = NSStackView(views: [b1, b2, b3]); keys.spacing = 4
+        let line = Layout.row([lbl, keys, more, del], spacing: 4)
+        view = NSStackView(views: [line, mouseLbl, appBtn, gestureBtn])
+        view.orientation = .vertical; view.alignment = .leading; view.spacing = 4
         self.appPath = appPath
         self.gesture = gesture
         refreshTitles()
         updateVisibility()
     }
     func refreshTitles() {
-        gestureBtn.title = gesture.map { "✍️ Hareket kayıtlı (\($0.count) nokta) – değiştir" } ?? "✍️ Hareket çiz…"
-        appBtn.title = appPath.map { "🚀 " + appName($0) } ?? "Uygulama seç…"
+        gestureBtn.title = gesture.map { "✍️ " + L("Hareket kayıtlı (\($0.count) nokta) – değiştir", "Gesture saved (\($0.count) points) – change") }
+            ?? L("✍️ Hareket çiz…", "✍️ Draw gesture…")
+        appBtn.title = appPath.map { "🚀 " + appName($0) } ?? L("Uygulama seç…", "Choose app…")
     }
     func updateVisibility() {
         keys.isHidden = (mouse != nil)
+        let plain = mouse != nil && mouse != "app" && mouse != "gesture"
+        mouseLbl.isHidden = !plain
+        if plain, let o = mouseOptions.first(where: { $0.0 == mouse }) { mouseLbl.stringValue = o.1 }
         appBtn.isHidden = (mouse != "app")
         gestureBtn.isHidden = (mouse != "gesture")
     }
@@ -492,7 +527,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var win: NSWindow!
     var statusItem: NSStatusItem!
     let perm = Layout.text("", size: 11, color: .labelColor)
-    let last = Layout.text("Atama kapalı. Yalnızca atanmış tuşlar çalışır.")
+    let last = Layout.text(L("Atama kapalı. Yalnızca atanmış tuşlar çalışır.", "Assigning is off. Only assigned keys work."))
     let list = NSStackView()
     var rows: [Row] = []
     var table: [String: Mapping] = [:]
@@ -506,11 +541,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var lastHide = Date.distantPast
     var busy = false                     // diyalog açıkken pencere gizlenmesin
     var hidErr: IOReturn = 0
-    let profLbl = NSTextField(labelWithString: "Aktif profil: Profil 1")
-    let layerBtn = NSButton(title: "Profil tuşu: Seç…", target: nil, action: nil)
+    let profLbl = NSTextField(labelWithString: L("Aktif profil: Profil 1", "Active profile: Profile 1"))
+    let layerBtn = NSButton(title: L("Profil tuşu: Seç…", "Profile key: Choose…"), target: nil, action: nil)
     let layerClear = NSButton(title: "✕", target: nil, action: nil)
-    let seg = NSSegmentedControl(labels: ["Profil 1", "Profil 2"], trackingMode: .selectOne, target: nil, action: nil)
-    let assignBtn = NSButton(title: "▶︎ Atamayı başlat", target: nil, action: nil)
+    let seg = NSSegmentedControl(labels: [L("Profil 1", "Profile 1"), L("Profil 2", "Profile 2")], trackingMode: .selectOne, target: nil, action: nil)
+    let assignBtn = NSButton(title: L("▶︎ Atamayı başlat", "▶︎ Start assigning"), target: nil, action: nil)
     let popup = NSPopUpButton(frame: .zero, pullsDown: false)
     var devices: [String] = []
     var selected: String? = UserDefaults.standard.string(forKey: "device")
@@ -546,13 +581,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let title = NSTextField(labelWithString: "Mac Remote")
         title.font = .systemFont(ofSize: 15, weight: .semibold)
         title.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let exitBtn = NSButton(title: "Çıkış", target: NSApplication.shared, action: #selector(NSApplication.terminate(_:)))
+        let exitBtn = NSButton(title: L("Çıkış", "Quit"), target: NSApplication.shared, action: #selector(NSApplication.terminate(_:)))
         exitBtn.bezelStyle = .rounded
         exitBtn.setContentHuggingPriority(.required, for: .horizontal)
 
-        popup.addItem(withTitle: "Tüm cihazlar (Apple hariç)")
+        popup.addItem(withTitle: L("Tüm cihazlar (Apple hariç)", "All devices (except Apple)"))
         popup.target = self; popup.action = #selector(deviceChanged)
-        let devLbl = NSTextField(labelWithString: "Cihaz:")
+        let devLbl = NSTextField(labelWithString: L("Cihaz:", "Device:"))
         devLbl.setContentHuggingPriority(.required, for: .horizontal)
         popup.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
@@ -563,7 +598,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         layerBtn.bezelStyle = .rounded; layerBtn.lineBreakMode = .byTruncatingTail
         layerBtn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         layerClear.target = self; layerClear.action = #selector(clearLayer)
-        layerClear.bezelStyle = .rounded; layerClear.toolTip = "Profil tuşunu kaldır"
+        layerClear.bezelStyle = .rounded; layerClear.toolTip = L("Profil tuşunu kaldır", "Remove profile key")
         layerClear.widthAnchor.constraint(equalToConstant: 34).isActive = true
         seg.target = self; seg.action = #selector(segChanged)
         seg.selectedSegment = 0; seg.segmentDistribution = .fillEqually
@@ -580,7 +615,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         header.edgeInsets = NSEdgeInsets(top: 12, left: 15, bottom: 0, right: 15)
         header.translatesAutoresizingMaskIntoConstraints = false
 
-        list.orientation = .vertical; list.alignment = .leading; list.spacing = 8
+        list.orientation = .vertical; list.alignment = .leading; list.spacing = 6
         list.translatesAutoresizingMaskIntoConstraints = false
         let doc = FlippedView()
         doc.translatesAutoresizingMaskIntoConstraints = false
@@ -636,7 +671,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
            let saved = try? JSONDecoder().decode([Mapping].self, from: d) {
             for m in saved where m.mouse != "macro" && (m.layer ?? 0) < profileCount {
                 addRow(Row(device: m.device, page: m.page, usage: m.usage,
-                           k1: m.mouse == nil ? m.k1 : nil, k2: m.k2,
+                           k1: m.mouse == nil ? m.k1 : nil, k2: m.k2, k3: m.k3,
                            mouse: m.mouse, appPath: m.app, layer: m.layer ?? 0, gesture: m.gesture), filter: false)
             }
         }
@@ -708,17 +743,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return rows.first { $0.key == id }
     }
 
-    @objc func actionChanged(_ b: NSPopUpButton) {
-        guard let row = rowFor(b) else { return }
-        let m = mouseOptions[b.indexOfSelectedItem].0
+    // "⋯" menüsünden seçilen eylem (fare / kaydırma / hareket / uygulama / klavye tuşu)
+    @objc func moreChosen(_ it: NSMenuItem) {
+        guard let id = it.representedObject as? String, let row = rows.first(where: { $0.key == id }) else { return }
+        let m = mouseOptions[it.tag].0
+        let old = row.mouse
         row.mouse = m.isEmpty ? nil : m
-        if m == "app" && row.appPath == nil {
-            if !chooseApp(for: row) { row.mouse = nil; b.selectItem(at: 0) }
-        }
+        if m == "app" && row.appPath == nil, !chooseApp(for: row) { row.mouse = old }
         if m == "gesture", let c = row.gesture?.first?.count, c != 3 { row.gesture = nil }
-        if m == "gesture" && row.gesture == nil {
-            if !drawGesture(for: row) { row.mouse = nil; b.selectItem(at: 0) }
-        }
+        if m == "gesture" && row.gesture == nil, !drawGesture(for: row) { row.mouse = old }
         row.updateVisibility()
         commit()
     }
@@ -734,7 +767,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @discardableResult
     func chooseApp(for row: Row) -> Bool {
         let panel = NSOpenPanel()
-        panel.title = "Açılacak uygulamayı seç"
+        panel.title = L("Açılacak uygulamayı seç", "Choose the app to open")
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
         panel.allowedContentTypes = [UTType.application]
         panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
@@ -748,11 +781,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let pad = GesturePad(frame: NSRect(x: 0, y: 0, width: 300, height: 240))
         if let g = row.gesture { pad.load(g) }
         let a = NSAlert()
-        a.messageText = "Hareketi çiz"
-        a.informativeText = "Kutuda fareyi basılı tutup sürükleyerek hareketi çiz. " +
-            "Yeşil nokta başlangıç, kırmızı nokta bitiş. Tuşa basınca hareket, imlecin o anki yerinden başlayarak oynatılır."
+        a.messageText = L("Hareketi çiz", "Draw the gesture")
+        a.informativeText = L("Kutuda fareyi basılı tutup sürükleyerek hareketi çiz. Yeşil nokta başlangıç, kırmızı nokta bitiş. Tuşa basınca hareket, imlecin o anki yerinden başlayarak oynatılır.",
+                              "Hold the mouse button and drag in the box to draw. Green dot = start, red dot = end. When you press the key, the gesture is replayed starting at the current cursor position.")
         a.accessoryView = pad
-        a.addButton(withTitle: "Kaydet"); a.addButton(withTitle: "İptal")
+        a.addButton(withTitle: L("Kaydet", "Save")); a.addButton(withTitle: L("İptal", "Cancel"))
         guard modal({ a.runModal() }) == .alertFirstButtonReturn, !pad.points.isEmpty else { return false }
         row.gesture = pad.points
         return true
@@ -773,22 +806,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func setProfile(_ n: Int, sound: Bool = true) {
         profile = n % profileCount
-        profLbl.stringValue = "Aktif profil: Profil \(profile + 1)"
+        profLbl.stringValue = L("Aktif profil: Profil ", "Active profile: Profile ") + "\(profile + 1)"
         if sound { NSSound(named: "Pop")?.play() }
     }
 
     func updateLayerUI() {
-        if pickingLayer { layerBtn.title = "Kumandada tuşa bas…"; return }
+        if pickingLayer { layerBtn.title = L("Kumandada tuşa bas…", "Press a remote key…"); return }
         if let k = layerKey {
             let parts = k.split(separator: "|").map(String.init)
             if parts.count >= 3, let pg = Int(parts[1]), let us = Int(parts[2]) {
-                layerBtn.title = "Profil tuşu: \(sourceName(pg, us))"
+                layerBtn.title = L("Profil tuşu: ", "Profile key: ") + sourceName(pg, us)
                 layerBtn.toolTip = "\(parts[0]) · \(sourceName(pg, us))"
                 return
             }
         }
-        layerBtn.title = "Profil tuşu: Seç…"
-        layerBtn.toolTip = "Profil tuşu olacak kumanda tuşuna bas"
+        layerBtn.title = L("Profil tuşu: Seç…", "Profile key: Choose…")
+        layerBtn.toolTip = L("Profil tuşu olacak kumanda tuşuna bas", "Press the remote key to use as the profile key")
     }
 
     @objc func pickLayerTapped() { pickingLayer = true; updateLayerUI() }
@@ -804,8 +837,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func refreshPerm() {
         let ax = AXIsProcessTrusted(), im = CGPreflightListenEventAccess()
-        perm.stringValue = "Erişilebilirlik: \(ax ? "VAR ✅" : "YOK ❌")   Giriş İzleme: \(im ? "VAR ✅" : "YOK ❌")"
-            + (hidErr == kIOReturnSuccess ? "" : "   ⚠️ HID açılamadı (\(hidErr))")
+        perm.stringValue = L("Erişilebilirlik: ", "Accessibility: ") + (ax ? "✅" : "❌") + L("   Giriş İzleme: ", "   Input Monitoring: ") + (im ? "✅" : "❌")
+            + (hidErr == kIOReturnSuccess ? "" : L("   ⚠️ HID açılamadı (", "   ⚠️ HID failed to open (") + "\(hidErr))")
         perm.isHidden = ax && im && hidErr == kIOReturnSuccess   // her şey tamamsa satırı gizle
     }
 
@@ -814,9 +847,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Hold.stop(); setProfile(0, sound: false); pickingLayer = false; updateLayerUI()
         activeBox?.refresh(); activeBox = nil
         if !assigning { clearEmpty(); commit() }
-        assignBtn.title = assigning ? "⏹ Atamayı bitir" : "▶︎ Atamayı başlat"
-        last.stringValue = assigning ? "Atama açık: kumandada bir tuşa bas."
-                                     : "Atama kapalı. Yalnızca atanmış tuşlar çalışır."
+        assignBtn.title = assigning ? L("⏹ Atamayı bitir", "⏹ Stop assigning") : L("▶︎ Atamayı başlat", "▶︎ Start assigning")
+        last.stringValue = assigning ? L("Atama açık: kumandada bir tuşa bas.", "Assigning is on: press a key on the remote.")
+                                     : L("Atama kapalı. Yalnızca atanmış tuşlar çalışır.", "Assigning is off. Only assigned keys work.")
         updateStatusTitle()
     }
 
@@ -879,7 +912,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if assigning {
             guard down else { return }
             let key = base + "|\(editLayer)"
-            last.stringValue = "Son sinyal: \(dev) · \(sourceName(page, usage))"
+            last.stringValue = L("Son sinyal: ", "Last signal: ") + "\(dev) · \(sourceName(page, usage))"
             if let row = rows.first(where: { $0.key == key }) { row.flash() }
             else { addRow(Row(device: dev, page: page, usage: usage, k1: nil, k2: nil, layer: editLayer)) }
             return
@@ -901,14 +934,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func addRow(_ row: Row, filter: Bool = true) {
-        row.b1.onChange = { [weak self] _ in self?.commit() }
-        row.b2.onChange = { [weak self] _ in self?.commit() }
+        for b in [row.b1, row.b2, row.b3] { b.onChange = { [weak self] _ in self?.commit() } }
         let id = NSUserInterfaceItemIdentifier(row.key)
-        row.act.target = self; row.act.action = #selector(actionChanged(_:))
+        for it in (row.more.menu?.items ?? []).dropFirst() {
+            it.target = self; it.action = #selector(moreChosen(_:)); it.representedObject = row.key
+        }
         row.appBtn.target = self; row.appBtn.action = #selector(appBtnTapped(_:))
         row.gestureBtn.target = self; row.gestureBtn.action = #selector(gestureBtnTapped(_:))
         row.del.target = self; row.del.action = #selector(deleteTapped(_:))
-        for c in [row.act, row.appBtn, row.gestureBtn, row.del] as [NSControl] { c.identifier = id }
+        for c in [row.appBtn, row.gestureBtn, row.del] { c.identifier = id }
         rows.append(row)
         list.addArrangedSubview(row.view)
         if filter { applyFilter() }
@@ -931,10 +965,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                        mouse: mo, app: r.appPath, layer: r.layer, gesture: r.gesture)
                 continue
             }
-            let k1 = r.b1.code ?? r.b2.code
-            let k2 = r.b1.code == nil ? nil : r.b2.code
-            if let k1 = k1 {
-                table[r.key] = Mapping(device: r.device, page: r.page, usage: r.usage, k1: k1, k2: k2, layer: r.layer)
+            let ks = [r.b1.code, r.b2.code, r.b3.code].compactMap { $0 }   // boş kutular atlanır
+            if let k1 = ks.first {
+                table[r.key] = Mapping(device: r.device, page: r.page, usage: r.usage, k1: k1,
+                                       k2: ks.count > 1 ? ks[1] : nil, layer: r.layer, k3: ks.count > 2 ? ks[2] : nil)
             }
         }
     }
