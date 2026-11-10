@@ -60,13 +60,9 @@ Kumandada bir tuşu **profil tuşu** olarak seçersen, ona **her basışta** sı
 Her satırdaki açılır menüden klavye tuşu yerine bir **fare eylemi** seçebilirsin:
 sol tık, sağ tık, orta tık, çift tık, tekerlek yukarı/aşağı ve imleci yukarı/aşağı/sola/sağa hareket ettirme.
 
-**Kaydırma (TikTok / Instagram Reels vb.):** menüden **📱 Aşağı kaydır**, **📱 Yukarı kaydır**, **📱 Sağa kaydır** veya **📱 Sola kaydır** seçersen tuşa her basışta tek vuruşluk bir kaydırma (tekerlek olayı) yapılır. Mesafeyi **Yukarı/aşağı kaydırma** ve **Sağa/sola kaydırma** çubuklarıyla ayrı ayrı ayarlarsın (varsayılan 120). Yön ters çıkarsa iki seçeneğin atamalarını yer değiştir.
+**Kaydırma (TikTok / Instagram Reels vb.):** menüden **📱 Aşağı kaydır**, **📱 Yukarı kaydır**, **📱 Sağa kaydır** veya **📱 Sola kaydır** seçersen tuşa her basışta tek vuruşluk bir kaydırma (tekerlek olayı) yapılır. Mesafeyi **Yukarı/aşağı kaydırma** ve **Sağa/sola kaydırma** çubuklarıyla ayrı ayrı ayarlarsın (varsayılan 120; çubuk 1–3000, yanındaki sayı kutusuna 1–20000 arası değer yazabilirsin). Yön ters çıkarsa iki seçeneğin atamalarını yer değiştir.
 
 **✍️ Hareket çiz (kendi hareketin):** menüden **✍️ Hareket çiz**'i seçince touchpad benzeri bir kutu açılır. Fareyi basılı tutup hareketi çiz (ör. aşağıdan yukarı çizgi), **Kaydet**'e bas. Kumanda tuşuna basınca bu hareket, imlecin o anki konumundan başlayarak fareyle sürükleme olarak yeniden oynatılır ve imleç yerine döner. Tekerlek kaydırmasına tepki vermeyen uygulamalarda (iPhone Yansıtma, emülatör vb.) bunu kullan. Çizimi değiştirmek için satırdaki hareket düğmesine tıkla.
-
-**🎯 Fare hareketi yakala:** ana penceredeki **Fare hareketi yakala** düğmesine bas. 3 saniyelik geri sayımdan sonra yakalama başlar. Fareyi/touchpad'i ekranda normal kullanır gibi hareket ettir (tıklama ve sürükleme de yakalanır) ve **Esc** ile (veya menü çubuğu ikonu → **⏹ Hareket kaydını bitir**, ya da düğmeye tekrar tıklayarak) bitir. 20 saniyede kendiliğinden de biter. Yakalanan hareket **Yakalanan fare hareketleri** listesine eklenir; adını değiştirebilir, **▶︎ Dene** ile 2 saniye sonra oynatabilir veya silebilirsin.
-
-Atamak için bir satırın açılır menüsünden **🎯 Yakalanan hareket**'i seç ve listeden hareketi seç (oradan **➕ Yeni hareket yakala…** ile de yakalayabilirsin). Kumanda tuşuna basınca hareket, imlecin o anki konumundan başlayarak aynı hızda taklit edilir ve imleç yerine döner (en fazla 8 sn). Aynı hareketi birden fazla tuşa atayabilirsin. Hareketler başlangıç noktasına göre göreli kaydedilir, o yüzden imleci hep aynı yere (ör. videonun üstüne) koy.
 
 **Uygulama kısayolu:** menüden **🚀 Uygulama aç**'ı seçip bir `.app` dosyası seç. O kumanda tuşu uygulamayı açar (zaten açıksa öne getirir). Uygulamayı değiştirmek için satırdaki uygulama düğmesine tıkla.
 
