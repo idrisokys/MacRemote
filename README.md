@@ -1,4 +1,4 @@
-# KumandaMac
+# Mac Kumanda
 
 Bluetooth kumandanın (ör. eski Xiaomi Mi TV Stick kumandası) tuşlarını Mac'te algılayıp istediğin **tuşa veya tuş kombinasyonuna** (ör. `⌘V`) çeviren küçük, tek dosyalık macOS uygulaması.
 
@@ -13,7 +13,7 @@ Bluetooth kumandanın (ör. eski Xiaomi Mi TV Stick kumandası) tuşlarını Mac
 Repo her `main` push'unda GitHub Actions ile otomatik derlenir.
 
 1. Repo sayfasında **Actions** sekmesine gir, son çalışmayı aç.
-2. Sayfanın altındaki **Artifacts** bölümünden `KumandaMac-macos` dosyasını indir ve zip'ten çıkar.
+2. Sayfanın altındaki **Artifacts** bölümünden `MacKumanda-macos` dosyasını indir ve zip'ten çıkar.
 
 Kalıcı bir sürüm yayınlamak için etiket at, `.app` dosyası **Releases** sayfasına otomatik eklenir:
 ```bash
@@ -25,22 +25,22 @@ Elle başlatmak için: Actions → Build → **Run workflow**.
 ## İlk açılış (Gatekeeper)
 Uygulama Apple geliştirici hesabıyla imzalanmadığı için macOS ilk açılışta engelleyebilir. Şunlardan birini yap:
 - Uygulamaya sağ tık → **Aç** → **Aç**, veya
-- Terminal'de: `xattr -dr com.apple.quarantine KumandaMac.app`
+- Terminal'de: `xattr -dr com.apple.quarantine "Mac Kumanda.app"`
 
-Sonra **Sistem Ayarları → Gizlilik ve Güvenlik** altında **Erişilebilirlik** ve **Giriş İzleme** bölümlerinde *Kumanda Ayar*'ı etkinleştirip uygulamayı yeniden başlat.
+Sonra **Sistem Ayarları → Gizlilik ve Güvenlik** altında **Erişilebilirlik** ve **Giriş İzleme** bölümlerinde *Mac Kumanda*'ı etkinleştirip uygulamayı yeniden başlat.
 
 ## Yerelde derleme
 Xcode Command Line Tools gerekir (`xcode-select --install`).
 ```bash
 ./build.sh
-open build/KumandaMac.app
+open "build/Mac Kumanda.app"
 ```
 
 ## Kullanım
-Uygulama menü çubuğunda bir kumanda ikonuyla çalışır. Pencereyi kapatsan da arka planda çalışmaya devam eder (kapatmak için menü çubuğu ikonu → **Çıkış**).
+Uygulama **ikon modunda** çalışır: Dock'ta görünmez, yalnızca menü çubuğunda bir kumanda ikonu olur. Ayarlar için ikona tıklayıp **Pencereyi aç**'ı seç. Pencereyi kapatsan da arka planda çalışmaya devam eder (kapatmak için menü çubuğu ikonu → **Çıkış**).
 
 1. Kumandayı Mac'e Bluetooth ile eşleştir.
-2. **Atamayı başlat**'a bas (pencereden veya menü çubuğu ikonundan). Atama sırasında ikonun yanında ● görünür.
+2. Pencerede **Atamayı başlat**'a bas. Atama sırasında ikonun yanında ● görünür.
 3. Kumandada bir tuşa bas, pencerede o tuşun satırı belirir.
 4. Satırdaki **ilk kutuya** tıkla ve klavyeden bir tuş bas. Tek kutu doluysa kumanda tuşu o tuş gibi çalışır.
 5. **İkinci kutuya** da tıklayıp bir tuş basarsan 1. tuş basılı tutulup 2. tuşa basılır. Örnek: 1. kutu `⌘ Command`, 2. kutu `V` → **Yapıştır**.
@@ -60,6 +60,8 @@ Kumandada bir tuşu **profil tuşu** olarak seçersen, ona **uzun basınca** **P
 ## Fare modu
 Her satırdaki açılır menüden klavye tuşu yerine bir **fare eylemi** seçebilirsin:
 sol tık, sağ tık, orta tık, çift tık, tekerlek yukarı/aşağı ve imleci yukarı/aşağı/sola/sağa hareket ettirme.
+
+**Video kaydırma (TikTok / Instagram Reels):** menüden **📱 Sonraki video (aşağı kaydır)** veya **📱 Önceki video (yukarı kaydır)** seçersen tuşa her basışta tek vuruşluk bir kaydırma yapılır ve bir sonraki/önceki videoya geçilir. **Video kaydırma** çubuğu kaydırma miktarını ayarlar; video tam geçmiyorsa artır, birden fazla video atlıyorsa azalt. Kaydırma, imlecin üzerinde olduğu pencereye gider.
 
 **Uygulama kısayolu:** menüden **🚀 Uygulama aç**'ı seçip bir `.app` dosyası seç. O kumanda tuşu uygulamayı açar (zaten açıksa öne getirir). Uygulamayı değiştirmek için satırdaki uygulama düğmesine tıkla.
 

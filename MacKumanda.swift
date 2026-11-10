@@ -85,6 +85,7 @@ let mouseOptions: [(String, String)] = [
     ("", "Klavye tuşu"),
     ("left", "🖱 Sol tık"), ("right", "🖱 Sağ tık"), ("middle", "🖱 Orta tık"), ("double", "🖱 Çift tık"),
     ("scrollUp", "🖱 Tekerlek yukarı"), ("scrollDown", "🖱 Tekerlek aşağı"),
+    ("videoNext", "📱 Sonraki video (aşağı kaydır)"), ("videoPrev", "📱 Önceki video (yukarı kaydır)"),
     ("moveUp", "🖱 İmleç yukarı"), ("moveDown", "🖱 İmleç aşağı"),
     ("moveLeft", "🖱 İmleç sola"), ("moveRight", "🖱 İmleç sağa"),
     ("app", "🚀 Uygulama aç")
@@ -92,6 +93,7 @@ let mouseOptions: [(String, String)] = [
 var moveSpeed: Double = UserDefaults.standard.object(forKey: "moveSpeed") as? Double ?? 12
 var holdTime: Double = UserDefaults.standard.object(forKey: "holdTime") as? Double ?? 0.3
 var scrollSpeed: Double = UserDefaults.standard.object(forKey: "scrollSpeed") as? Double ?? 20
+var swipeAmount: Double = UserDefaults.standard.object(forKey: "swipeAmount") as? Double ?? 500
 
 func cursorPos() -> CGPoint { CGEvent(source: nil)?.location ?? .zero }
 
@@ -138,6 +140,21 @@ func mouseClick(_ kind: String) {
 func mouseScroll(_ amount: Int32) {
     CGEvent(scrollWheelEvent2Source: CGEventSource(stateID: .hidSystemState), units: .pixel,
             wheelCount: 1, wheel1: amount, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
+}
+
+// TikTok / Instagram Reels gibi videoları tek vuruşta kaydırır (bir basış = bir video)
+var lastSwipe = Date.distantPast
+func videoSwipe(next: Bool) {
+    let now = Date()
+    if now.timeIntervalSince(lastSwipe) < 0.45 { return } // animasyon bitmeden ikinci kaydırmayı yok say
+    lastSwipe = now
+    let steps = 8
+    let per = Int32(max(1, swipeAmount / Double(steps)))
+    for i in 0..<steps {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.012 * Double(i)) {
+            mouseScroll(next ? -per : per)
+        }
+    }
 }
 
 // Tuş basılı tutulduğu sürece imleci/tekerleği sürekli çalıştırır (kademeli hızlanma ile)
@@ -295,9 +312,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var hidErr: IOReturn = 0
     let moveLbl = NSTextField(labelWithString: "")
     let scrollLbl = NSTextField(labelWithString: "")
+    let swipeLbl = NSTextField(labelWithString: "")
     let assignBtn = NSButton(title: "▶︎ Atamayı başlat", target: nil, action: nil)
     var statusItem: NSStatusItem!
-    var toggleItem: NSMenuItem!
     let popup = NSPopUpButton(frame: .zero, pullsDown: false)
     var devices: [String] = []
     var selected: String? = UserDefaults.standard.string(forKey: "device")
@@ -336,7 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hint = NSTextField(wrappingLabelWithString:
             "1) “Atamayı başlat”a bas, kumandada bir tuşa bas: satırı belirir.\n" +
             "2) Klavye tuşu için kutulara tıkla ve tuş bas (iki kutu = 1. tuş basılı tutulup 2. tuşa basılır, ör. ⌘ + V).\n" +
-            "3) Fare veya uygulama için açılır menüden seçim yap.\n" +
+            "3) Fare, video kaydırma (TikTok / Reels) veya uygulama için açılır menüden seçim yap.\n" +
             "4) Profil tuşu: seçtiğin tuşa basılı tutunca (gecikme çubuğu 0 ise basar basmaz) Profil 2'ye geçilir ve orada kalınır, tekrar basılı tutunca Profil 1'e dönülür.\n" +
             "5) Bitince “Atamayı bitir”e bas. Bundan sonra yalnızca atanmış tuşlar çalışır.")
         hint.widthAnchor.constraint(equalToConstant: 720).isActive = true
@@ -357,6 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let moveRow = speedRow("İmleç hızı:", 1, 40, moveSpeed, #selector(moveSpeedChanged(_:)), moveLbl)
         let scrollRow = speedRow("Tekerlek hızı:", 1, 80, scrollSpeed, #selector(scrollSpeedChanged(_:)), scrollLbl)
+        let swipeRow = speedRow("Video kaydırma:", 100, 1500, swipeAmount, #selector(swipeAmountChanged(_:)), swipeLbl)
 
         layerBtn.target = self; layerBtn.action = #selector(pickLayerTapped)
         layerClear.target = self; layerClear.action = #selector(clearLayer)
@@ -372,17 +390,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         assignBtn.target = self; assignBtn.action = #selector(toggleAssign)
         assignBtn.bezelStyle = .rounded; assignBtn.controlSize = .large
-        let root = NSStackView(views: [perm, assignBtn, devRow, moveRow, scrollRow, layerRow, holdRow, hint, last, profLbl, seg, list])
+        let root = NSStackView(views: [perm, assignBtn, devRow, moveRow, scrollRow, swipeRow, layerRow, holdRow, hint, last, profLbl, seg, list])
         root.orientation = .vertical; root.alignment = .leading; root.spacing = 14
         root.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         list.orientation = .vertical; list.alignment = .leading; list.spacing = 8
 
-        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 760),
+        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 800),
                        styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        win.title = "Kumanda Ayar"
+        win.title = "Mac Kumanda"
         win.isReleasedWhenClosed = false
         win.contentView = root
-        win.center(); win.makeKeyAndOrderFront(nil)
+        win.center()
 
         // Kayıtlı atamaları yükle
         if let d = UserDefaults.standard.data(forKey: "maps2"),
@@ -412,6 +430,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hidErr = startHID()
         refreshPerm()
+        // İkon modu: kayıtlı atama varsa pencere gizli başlar; ilk kurulumda ayar için açılır
+        if rows.isEmpty { showWindow() }
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.refreshPerm() }
     }
 
@@ -428,6 +448,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func scrollSpeedChanged(_ s: NSSlider) {
         scrollSpeed = s.doubleValue; scrollLbl.stringValue = String(Int(s.doubleValue))
         UserDefaults.standard.set(scrollSpeed, forKey: "scrollSpeed")
+    }
+    @objc func swipeAmountChanged(_ s: NSSlider) {
+        swipeAmount = s.doubleValue; swipeLbl.stringValue = String(Int(s.doubleValue))
+        UserDefaults.standard.set(swipeAmount, forKey: "swipeAmount")
     }
     @objc func actionChanged(_ b: NSPopUpButton) {
         guard let id = b.identifier?.rawValue, let row = rows.first(where: { $0.key == id }) else { return }
@@ -524,7 +548,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func updateModeUI() {
         assignBtn.title = assigning ? "⏹ Atamayı bitir" : "▶︎ Atamayı başlat"
-        toggleItem.title = assigning ? "Atamayı bitir" : "Atamayı başlat"
         updateStatusTitle()
         last.stringValue = assigning ? "Atama açık: kumandada bir tuşa bas."
                                      : "Atama kapalı. Yalnızca atanmış tuşlar çalışır."
@@ -547,15 +570,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = menuIcon()
+        statusItem.button?.toolTip = "Mac Kumanda"
         let menu = NSMenu()
-        toggleItem = NSMenuItem(title: "Atamayı başlat", action: #selector(toggleAssign), keyEquivalent: "")
-        toggleItem.target = self
         let show = NSMenuItem(title: "Pencereyi aç", action: #selector(showWindow), keyEquivalent: "")
         show.target = self
         let quit = NSMenuItem(title: "Çıkış", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let prof = NSMenuItem(title: "Profili değiştir", action: #selector(switchProfile), keyEquivalent: "")
         prof.target = self
-        menu.addItem(toggleItem); menu.addItem(prof); menu.addItem(show); menu.addItem(.separator()); menu.addItem(quit)
+        menu.addItem(prof); menu.addItem(show); menu.addItem(.separator()); menu.addItem(quit)
         statusItem.menu = menu
     }
 
@@ -564,6 +586,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch mo {
             case "app": if down, let path = m.app { openApp(path) }
             case "left", "right", "middle", "double": if down { mouseClick(mo) }
+            case "videoNext": if down { videoSwipe(next: true) }
+            case "videoPrev": if down { videoSwipe(next: false) }
             default: if down { Hold.press(base, mo) } else { Hold.release(base) }
             }
             return
@@ -675,6 +699,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
-app.setActivationPolicy(.regular)
-app.activate(ignoringOtherApps: true)
+app.setActivationPolicy(.accessory)   // Dock'ta görünmez, yalnızca menü çubuğu ikonu
 app.run()

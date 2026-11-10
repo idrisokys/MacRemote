@@ -1,6 +1,6 @@
 # Derleme çıktısı
 build/
-KumandaMac-macos.zip
+MacKumanda-macos.zip
 *.o
 *.dSYM/
 .build/
