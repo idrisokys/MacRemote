@@ -3,7 +3,11 @@ import IOKit.hid
 import UniformTypeIdentifiers
 
 // ---------- Veri ----------
-struct Mapping: Codable { var device: String; var page: Int; var usage: Int; var k1: Int; var k2: Int?; var mouse: String?; var app: String?; var layer: Int? }
+struct Mapping: Codable { var device: String; var page: Int; var usage: Int; var k1: Int; var k2: Int?; var mouse: String?; var app: String?; var layer: Int?; var gesture: [[Double]]?; var capture: String? }
+
+// Yakalanan fare hareketi: points = [dx, dy, t, tür]
+struct Capture: Codable { var id: String; var name: String; var points: [[Double]] }
+var captures: [Capture] = (UserDefaults.standard.data(forKey: "captures").flatMap { try? JSONDecoder().decode([Capture].self, from: $0) }) ?? []
 
 let modFlag: [Int: CGEventFlags] = [
     54: .maskCommand, 55: .maskCommand, 56: .maskShift, 60: .maskShift,
@@ -85,15 +89,17 @@ let mouseOptions: [(String, String)] = [
     ("", "Klavye tuşu"),
     ("left", "🖱 Sol tık"), ("right", "🖱 Sağ tık"), ("middle", "🖱 Orta tık"), ("double", "🖱 Çift tık"),
     ("scrollUp", "🖱 Tekerlek yukarı"), ("scrollDown", "🖱 Tekerlek aşağı"),
-    ("videoNext", "📱 Sonraki video (aşağı kaydır)"), ("videoPrev", "📱 Önceki video (yukarı kaydır)"),
+    ("videoNext", "📱 Aşağı kaydır"), ("videoPrev", "📱 Yukarı kaydır"),
+    ("swipeRight", "📱 Sağa kaydır"), ("swipeLeft", "📱 Sola kaydır"),
+    ("gesture", "✍️ Hareket çiz"), ("macro", "🎯 Yakalanan hareket"),
     ("moveUp", "🖱 İmleç yukarı"), ("moveDown", "🖱 İmleç aşağı"),
     ("moveLeft", "🖱 İmleç sola"), ("moveRight", "🖱 İmleç sağa"),
     ("app", "🚀 Uygulama aç")
 ]
 var moveSpeed: Double = UserDefaults.standard.object(forKey: "moveSpeed") as? Double ?? 12
-var holdTime: Double = UserDefaults.standard.object(forKey: "holdTime") as? Double ?? 0.3
 var scrollSpeed: Double = UserDefaults.standard.object(forKey: "scrollSpeed") as? Double ?? 20
-var swipeAmount: Double = UserDefaults.standard.object(forKey: "swipeAmount") as? Double ?? 500
+var swipeAmount: Double = UserDefaults.standard.object(forKey: "swipeAmountV2") as? Double ?? 120      // yukarı/aşağı
+var swipeAmountH: Double = UserDefaults.standard.object(forKey: "swipeAmountHV2") as? Double ?? 120     // sağa/sola
 
 func cursorPos() -> CGPoint { CGEvent(source: nil)?.location ?? .zero }
 
@@ -142,17 +148,157 @@ func mouseScroll(_ amount: Int32) {
             wheelCount: 1, wheel1: amount, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
 }
 
-// TikTok / Instagram Reels gibi videoları tek vuruşta kaydırır (bir basış = bir video)
 var lastSwipe = Date.distantPast
-func videoSwipe(next: Bool) {
+
+func mouseScrollH(_ amount: Int32) {
+    guard let e = CGEvent(scrollWheelEvent2Source: CGEventSource(stateID: .hidSystemState), units: .pixel,
+                          wheelCount: 2, wheel1: 0, wheel2: amount, wheel3: 0) else { return }
+    e.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+    e.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(amount))
+    e.setIntegerValueField(.scrollWheelEventDeltaAxis2, value: Int64(amount))
+    e.post(tap: .cghidEventTap)
+}
+
+// ---------- Çizilen hareket (touchpad alanı) ----------
+// Kayıt: [dx, dy, t] — ilk noktaya göre ekran yönünde (y aşağı), t saniye
+func playGesture(_ g: [[Double]]) {
+    guard g.count >= 2, g.allSatisfy({ $0.count == 3 }) else { return }
+    let now = Date()
+    if now.timeIntervalSince(lastSwipe) < 0.5 { return }
+    lastSwipe = now
+    let p0 = cursorPos()
+    let total = max(g[g.count - 1][2], 0.001)
+    let k = min(1.0, 0.45 / total)           // çok yavaş çizilen hareketi hızlandır (fiske gibi çalışsın)
+    let src = CGEventSource(stateID: .hidSystemState)
+    let post: (CGEventType, CGPoint) -> Void = { type, pt in
+        if let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: pt, mouseButton: .left) {
+            e.post(tap: .cghidEventTap)
+        }
+    }
+    post(.leftMouseDown, p0)
+    var endPt = p0
+    for i in 1..<g.count {
+        let q = g[i]
+        let pt = clampToDisplays(CGPoint(x: p0.x + q[0], y: p0.y + q[1]))
+        endPt = pt
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02 + q[2] * k + Double(i) * 0.0005) { post(.leftMouseDragged, pt) }
+    }
+    let end = 0.02 + total * k + Double(g.count) * 0.0005
+    DispatchQueue.main.asyncAfter(deadline: .now() + end + 0.02) { post(.leftMouseUp, endPt) }
+    DispatchQueue.main.asyncAfter(deadline: .now() + end + 0.06) { CGWarpMouseCursorPosition(p0) } // imleç yerine dönsün
+}
+
+// Gerçek fare hareketinin kaydı: [dx, dy, t, tür]  tür: 0 hareket, 1 sol basış, 2 sürükleme, 3 sol bırakma
+var macroPlaying = false
+func playMacro(_ g: [[Double]]) {
+    guard !macroPlaying, g.count >= 2, g.allSatisfy({ $0.count == 4 }) else { return }
+    macroPlaying = true
+    let p0 = cursorPos()
+    let total = max(g[g.count - 1][2], 0.001)
+    let k = min(1.0, 8.0 / total)             // en fazla 8 sn
+    let src = CGEventSource(stateID: .hidSystemState)
+    var prev = p0
+    var isDown = false
+    for (i, q) in g.enumerated() {
+        let pt = clampToDisplays(CGPoint(x: p0.x + q[0], y: p0.y + q[1]))
+        let kind = Int(q[3])
+        let from = prev; prev = pt
+        if kind == 1 { isDown = true } else if kind == 3 { isDown = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.01 + q[2] * k + Double(i) * 0.0003) {
+            let type: CGEventType = kind == 1 ? .leftMouseDown : kind == 3 ? .leftMouseUp : kind == 2 ? .leftMouseDragged : .mouseMoved
+            guard let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: pt, mouseButton: .left) else { return }
+            e.setIntegerValueField(.mouseEventDeltaX, value: Int64(pt.x - from.x))
+            e.setIntegerValueField(.mouseEventDeltaY, value: Int64(pt.y - from.y))
+            e.post(tap: .cghidEventTap)
+        }
+    }
+    let end = 0.01 + total * k + Double(g.count) * 0.0003
+    let last = prev, wasDown = isDown
+    DispatchQueue.main.asyncAfter(deadline: .now() + end + 0.03) {
+        if wasDown, let e = CGEvent(mouseEventSource: src, mouseType: .leftMouseUp, mouseCursorPosition: last, mouseButton: .left) {
+            e.post(tap: .cghidEventTap)   // kayıtta basılı kalmışsa bırak
+        }
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + end + 0.08) { CGWarpMouseCursorPosition(p0); macroPlaying = false }
+}
+
+final class GesturePad: NSView {
+    var points: [[Double]] = []
+    var viewPath: [NSPoint] = []
+    var times: [Double] = []
+    var t0 = Date()
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    func load(_ g: [[Double]]) {
+        points = g
+        let xs = g.map { $0[0] }, ys = g.map { -$0[1] }
+        let cx = ((xs.min() ?? 0) + (xs.max() ?? 0)) / 2, cy = ((ys.min() ?? 0) + (ys.max() ?? 0)) / 2
+        viewPath = zip(xs, ys).map { NSPoint(x: Double(bounds.midX) + $0 - cx, y: Double(bounds.midY) + $1 - cy) }
+        needsDisplay = true
+    }
+    override func mouseDown(with ev: NSEvent) {
+        viewPath = [convert(ev.locationInWindow, from: nil)]
+        times = [0]; t0 = Date(); points = []
+        needsDisplay = true
+    }
+    override func mouseDragged(with ev: NSEvent) {
+        let p = convert(ev.locationInWindow, from: nil)
+        viewPath.append(NSPoint(x: min(max(p.x, 0), bounds.maxX), y: min(max(p.y, 0), bounds.maxY)))
+        times.append(Date().timeIntervalSince(t0))
+        needsDisplay = true
+    }
+    override func mouseUp(with ev: NSEvent) {
+        var len = 0.0
+        for i in 1..<max(1, viewPath.count) { len += Double(hypot(viewPath[i].x - viewPath[i-1].x, viewPath[i].y - viewPath[i-1].y)) }
+        guard viewPath.count >= 2, len >= 8 else { viewPath = []; points = []; needsDisplay = true; return }
+        var idx = Array(0..<viewPath.count)
+        if idx.count > 60 {
+            let step = Double(idx.count - 1) / 59.0
+            idx = (0..<60).map { Int((Double($0) * step).rounded()) }
+        }
+        let o = viewPath[0]
+        points = idx.map { [Double(viewPath[$0].x - o.x), -Double(viewPath[$0].y - o.y), times[$0]] }
+        viewPath = idx.map { viewPath[$0] }
+        needsDisplay = true
+    }
+    override func draw(_ r: NSRect) {
+        let bg = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.5, dy: 1.5), xRadius: 18, yRadius: 18)
+        NSColor.controlBackgroundColor.setFill(); bg.fill()
+        NSColor.tertiaryLabelColor.setStroke(); bg.lineWidth = 2; bg.stroke()
+        if viewPath.count < 2 {
+            let t = "Fareyi basılı tutup sürükleyerek hareketi çiz" as NSString
+            let at: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.secondaryLabelColor]
+            let sz = t.size(withAttributes: at)
+            t.draw(at: NSPoint(x: bounds.midX - sz.width / 2, y: bounds.midY - sz.height / 2), withAttributes: at)
+            return
+        }
+        let path = NSBezierPath()
+        path.move(to: viewPath[0]); for p in viewPath.dropFirst() { path.line(to: p) }
+        path.lineWidth = 5; path.lineCapStyle = .round; path.lineJoinStyle = .round
+        NSColor.controlAccentColor.setStroke(); path.stroke()
+        NSColor.systemGreen.setFill()
+        NSBezierPath(ovalIn: NSRect(x: viewPath[0].x - 7, y: viewPath[0].y - 7, width: 14, height: 14)).fill()
+        NSColor.systemRed.setFill()
+        let e = viewPath[viewPath.count - 1]
+        NSBezierPath(ovalIn: NSRect(x: e.x - 7, y: e.y - 7, width: 14, height: 14)).fill()
+    }
+}
+
+// TikTok / Instagram Reels gibi videoları tek vuruşta kaydırır (bir basış = bir video)
+enum SwipeDir { case down, up, right, left }
+func swipe(_ dir: SwipeDir) {
     let now = Date()
     if now.timeIntervalSince(lastSwipe) < 0.45 { return } // animasyon bitmeden ikinci kaydırmayı yok say
     lastSwipe = now
     let steps = 8
-    let per = Int32(max(1, swipeAmount / Double(steps)))
+    let vertical = (dir == .down || dir == .up)
+    let per = Int32(max(1, (vertical ? swipeAmount : swipeAmountH) / Double(steps)))
+    // aşağı/sağa kaydır: içerik ilerler (negatif), yukarı/sola kaydır: geri döner (pozitif)
+    let signed: Int32 = (dir == .down || dir == .right) ? -per : per
     for i in 0..<steps {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.012 * Double(i)) {
-            mouseScroll(next ? -per : per)
+            if vertical { mouseScroll(signed) } else { mouseScrollH(signed) }
         }
     }
 }
@@ -250,10 +396,13 @@ final class Row {
     let device: String, page: Int, usage: Int
     let layer: Int
     var mouse: String?
+    var gesture: [[Double]]? { didSet { refreshGestureTitle() } }
+    var capture: String? { didSet { refreshGestureTitle() } }
     var appPath: String? { didSet { refreshAppTitle() } }
     let label: NSTextField
     let act = NSPopUpButton(frame: .zero, pullsDown: false)
     let appBtn = NSButton(title: "Uygulama seç…", target: nil, action: nil)
+    let gestureBtn = NSButton(title: "✍️ Hareket çiz…", target: nil, action: nil)
     let b1 = KeyBox(frame: .zero), b2 = KeyBox(frame: .zero)
     let plus = NSTextField(labelWithString: "+")
     let del = NSButton(title: "Sil", target: nil, action: nil)
@@ -261,7 +410,7 @@ final class Row {
     var key: String { "\(device)|\(page)|\(usage)|\(layer)" }
     var isEmpty: Bool { b1.code == nil && b2.code == nil && mouse == nil }
 
-    init(device: String, page: Int, usage: Int, k1: Int?, k2: Int?, mouse: String? = nil, appPath: String? = nil, layer: Int = 0) {
+    init(device: String, page: Int, usage: Int, k1: Int?, k2: Int?, mouse: String? = nil, appPath: String? = nil, layer: Int = 0, gesture: [[Double]]? = nil, capture: String? = nil) {
         self.device = device; self.page = page; self.usage = usage; self.mouse = mouse; self.layer = layer
         label = NSTextField(labelWithString: "\(device) · \(sourceName(page, usage))")
         label.widthAnchor.constraint(equalToConstant: 190).isActive = true
@@ -272,17 +421,36 @@ final class Row {
         act.widthAnchor.constraint(equalToConstant: 150).isActive = true
         appBtn.bezelStyle = .rounded
         appBtn.widthAnchor.constraint(equalToConstant: 270).isActive = true
-        view = NSStackView(views: [label, act, appBtn, b1, plus, b2, del])
+        gestureBtn.bezelStyle = .rounded
+        gestureBtn.widthAnchor.constraint(equalToConstant: 270).isActive = true
+        view = NSStackView(views: [label, act, appBtn, gestureBtn, b1, plus, b2, del])
         view.spacing = 8
         self.appPath = appPath
-        refreshAppTitle()
+        self.gesture = gesture
+        self.capture = capture
+        refreshAppTitle(); refreshGestureTitle()
         updateVisibility()
+    }
+    func refreshGestureTitle() {
+        if mouse == "macro" {
+            if let id = capture {
+                gestureBtn.title = "🎯 " + (captures.first(where: { $0.id == id })?.name ?? "silinmiş hareket – yeniden seç")
+            } else if let g = gesture {
+                gestureBtn.title = "🎬 Eski kayıt (\(g.count) adım) – değiştir"
+            } else {
+                gestureBtn.title = "🎯 Hareket seç…"
+            }
+        } else {
+            gestureBtn.title = gesture.map { "✍️ Hareket kayıtlı (\($0.count) nokta) – değiştir" } ?? "✍️ Hareket çiz…"
+        }
     }
     func refreshAppTitle() { appBtn.title = appPath.map { "🚀 " + appName($0) } ?? "Uygulama seç…" }
     func updateVisibility() {
         let kb = (mouse == nil)
         b1.isHidden = !kb; plus.isHidden = !kb; b2.isHidden = !kb
         appBtn.isHidden = (mouse != "app")
+        gestureBtn.isHidden = !(mouse == "gesture" || mouse == "macro")
+        refreshGestureTitle()
     }
     func flash() {
         label.textColor = .systemGreen
@@ -301,18 +469,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var assigning = false
     var editLayer = 0
     var layerKey: String? = UserDefaults.standard.string(forKey: "layerKey")
-    var layerActive = false, layerDown = false, layerFired = false, pickingLayer = false
-    var layerTimer: Timer?
-    let holdLbl = NSTextField(labelWithString: "")
+    var recBusy = false
+    var recCompletion: (([[Double]]) -> Void)?
+    var pickRow: Row?
+    let captureBtn = NSButton(title: "🎯 Fare hareketi yakala", target: nil, action: nil)
+    let capList = NSStackView()
+    var recActive = false
+    var recSamples: [[Double]] = []
+    var recOrigin = CGPoint.zero, recStart = Date()
+    var recMonitors: [Any] = []
+    var recTimer: Timer?
+    var stopRecItem: NSMenuItem!
+    var profile = 0                      // 0, 1, 2 -> Profil 1, 2, 3
+    let profileCount = 3
+    var pickingLayer = false
+    var lastProfileSwitch = Date.distantPast
     let profLbl = NSTextField(labelWithString: "Aktif profil: Profil 1")
     let layerBtn = NSButton(title: "Seç…", target: nil, action: nil)
     let layerClear = NSButton(title: "Kaldır", target: nil, action: nil)
-    let seg = NSSegmentedControl(labels: ["Profil 1 (normal)", "Profil 2 (profil tuşuna uzun basınca)"],
+    let seg = NSSegmentedControl(labels: ["Profil 1", "Profil 2", "Profil 3"],
                                  trackingMode: .selectOne, target: nil, action: nil)
     var hidErr: IOReturn = 0
     let moveLbl = NSTextField(labelWithString: "")
     let scrollLbl = NSTextField(labelWithString: "")
     let swipeLbl = NSTextField(labelWithString: "")
+    let swipeLblH = NSTextField(labelWithString: "")
     let assignBtn = NSButton(title: "▶︎ Atamayı başlat", target: nil, action: nil)
     var statusItem: NSStatusItem!
     let popup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -353,8 +534,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hint = NSTextField(wrappingLabelWithString:
             "1) “Atamayı başlat”a bas, kumandada bir tuşa bas: satırı belirir.\n" +
             "2) Klavye tuşu için kutulara tıkla ve tuş bas (iki kutu = 1. tuş basılı tutulup 2. tuşa basılır, ör. ⌘ + V).\n" +
-            "3) Fare, video kaydırma (TikTok / Reels) veya uygulama için açılır menüden seçim yap.\n" +
-            "4) Profil tuşu: seçtiğin tuşa basılı tutunca (gecikme çubuğu 0 ise basar basmaz) Profil 2'ye geçilir ve orada kalınır, tekrar basılı tutunca Profil 1'e dönülür.\n" +
+            "3) Fare, kaydırma, kendi hareketin (✍️ çiz veya 🎯 yakalanan fare hareketi) veya uygulama için açılır menüden seçim yap.\n" +
+            "4) Profil tuşu: seçtiğin tuşa her basışta sıradaki profile geçilir (1 → 2 → 3 → 1).\n" +
             "5) Bitince “Atamayı bitir”e bas. Bundan sonra yalnızca atanmış tuşlar çalışır.")
         hint.widthAnchor.constraint(equalToConstant: 720).isActive = true
 
@@ -368,20 +549,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sl.widthAnchor.constraint(equalToConstant: 240).isActive = true
             lbl.stringValue = String(Int(v))
             let t = NSTextField(labelWithString: title)
-            t.widthAnchor.constraint(equalToConstant: 130).isActive = true
+            t.widthAnchor.constraint(equalToConstant: 160).isActive = true
             let r = NSStackView(views: [t, sl, lbl]); r.spacing = 8
             return r
         }
         let moveRow = speedRow("İmleç hızı:", 1, 40, moveSpeed, #selector(moveSpeedChanged(_:)), moveLbl)
         let scrollRow = speedRow("Tekerlek hızı:", 1, 80, scrollSpeed, #selector(scrollSpeedChanged(_:)), scrollLbl)
-        let swipeRow = speedRow("Video kaydırma:", 100, 1500, swipeAmount, #selector(swipeAmountChanged(_:)), swipeLbl)
+        let swipeRow = speedRow("Yukarı/aşağı kaydırma:", 10, 600, swipeAmount, #selector(swipeAmountChanged(_:)), swipeLbl)
+        let swipeRowH = speedRow("Sağa/sola kaydırma:", 10, 600, swipeAmountH, #selector(swipeAmountHChanged(_:)), swipeLblH)
+        captureBtn.target = self; captureBtn.action = #selector(captureBtnTapped)
+        captureBtn.bezelStyle = .rounded
+        capList.orientation = .vertical; capList.alignment = .leading; capList.spacing = 6
+        let capHeader = NSTextField(labelWithString: "Yakalanan fare hareketleri (satırda “🎯 Yakalanan hareket” ile atanır):")
+        rebuildCapList()
 
         layerBtn.target = self; layerBtn.action = #selector(pickLayerTapped)
         layerClear.target = self; layerClear.action = #selector(clearLayer)
         layerBtn.bezelStyle = .rounded; layerClear.bezelStyle = .rounded
         layerBtn.widthAnchor.constraint(equalToConstant: 300).isActive = true
-        let holdRow = speedRow("Geçiş gecikmesi:", 0.0, 2.0, holdTime, #selector(holdTimeChanged(_:)), holdLbl)
-        holdLbl.stringValue = holdTime <= 0.05 ? "anında" : String(format: "%.1f sn", holdTime)
         let layerRow = NSStackView(views: [NSTextField(labelWithString: "Profil tuşu:"), layerBtn, layerClear])
         layerRow.spacing = 8
         seg.target = self; seg.action = #selector(segChanged)
@@ -390,12 +575,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         assignBtn.target = self; assignBtn.action = #selector(toggleAssign)
         assignBtn.bezelStyle = .rounded; assignBtn.controlSize = .large
-        let root = NSStackView(views: [perm, assignBtn, devRow, moveRow, scrollRow, swipeRow, layerRow, holdRow, hint, last, profLbl, seg, list])
+        let root = NSStackView(views: [perm, assignBtn, devRow, moveRow, scrollRow, swipeRow, swipeRowH, captureBtn, capHeader, capList, layerRow, hint, last, profLbl, seg, list])
         root.orientation = .vertical; root.alignment = .leading; root.spacing = 14
         root.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         list.orientation = .vertical; list.alignment = .leading; list.spacing = 8
 
-        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 800),
+        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 940),
                        styleMask: [.titled, .closable], backing: .buffered, defer: false)
         win.title = "Mac Kumanda"
         win.isReleasedWhenClosed = false
@@ -407,7 +592,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            let saved = try? JSONDecoder().decode([Mapping].self, from: d) {
             for m in saved { addRow(Row(device: m.device, page: m.page, usage: m.usage,
                                         k1: m.mouse == nil ? m.k1 : nil, k2: m.k2,
-                                        mouse: m.mouse, appPath: m.app, layer: m.layer ?? 0)) }
+                                        mouse: m.mouse, appPath: m.app, layer: m.layer ?? 0, gesture: m.gesture, capture: m.capture)) }
         }
         rebuildTable()
 
@@ -449,9 +634,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scrollSpeed = s.doubleValue; scrollLbl.stringValue = String(Int(s.doubleValue))
         UserDefaults.standard.set(scrollSpeed, forKey: "scrollSpeed")
     }
+    @objc func swipeAmountHChanged(_ s: NSSlider) {
+        swipeAmountH = s.doubleValue; swipeLblH.stringValue = String(Int(s.doubleValue))
+        UserDefaults.standard.set(swipeAmountH, forKey: "swipeAmountHV2")
+    }
     @objc func swipeAmountChanged(_ s: NSSlider) {
         swipeAmount = s.doubleValue; swipeLbl.stringValue = String(Int(s.doubleValue))
-        UserDefaults.standard.set(swipeAmount, forKey: "swipeAmount")
+        UserDefaults.standard.set(swipeAmount, forKey: "swipeAmountV2")
     }
     @objc func actionChanged(_ b: NSPopUpButton) {
         guard let id = b.identifier?.rawValue, let row = rows.first(where: { $0.key == id }) else { return }
@@ -460,6 +649,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if m == "app" && row.appPath == nil {
             if !chooseApp(for: row) { row.mouse = nil; b.selectItem(at: 0) }
         }
+        if m == "gesture" || m == "macro" {
+            let need = (m == "macro") ? 4 : 3
+            if let c = row.gesture?.first?.count, c != need { row.gesture = nil }
+        }
+        if m == "gesture" && row.gesture == nil {
+            if !drawGesture(for: row) { row.mouse = nil; b.selectItem(at: 0) }
+        }
+        if m == "macro" && row.gesture == nil && row.capture == nil { row.updateVisibility(); showCaptureMenu(for: row, from: row.gestureBtn) }
         row.updateVisibility()
         commit()
     }
@@ -476,33 +673,216 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    @discardableResult
+    func drawGesture(for row: Row) -> Bool {
+        let pad = GesturePad(frame: NSRect(x: 0, y: 0, width: 420, height: 300))
+        if let g = row.gesture { pad.load(g) }
+        let a = NSAlert()
+        a.messageText = "Hareketi çiz"
+        a.informativeText = "Kutuda fareyi basılı tutup sürükleyerek hareketi çiz (ör. aşağıdan yukarı doğru çizgi). " +
+            "Yeşil nokta başlangıç, kırmızı nokta bitiş. Tekrar çizersen öncekinin yerine geçer.\n" +
+            "Tuşa basınca hareket, o anda imlecin bulunduğu yerden başlayıp yeniden oynatılır."
+        a.accessoryView = pad
+        a.addButton(withTitle: "Kaydet"); a.addButton(withTitle: "İptal")
+        NSApp.activate(ignoringOtherApps: true)
+        guard a.runModal() == .alertFirstButtonReturn, !pad.points.isEmpty else { return false }
+        row.gesture = pad.points
+        return true
+    }
+
+    // ----- Fare hareketi yakalama sistemi -----
+    func startCapture(then done: @escaping ([[Double]]) -> Void) {
+        guard !recBusy else { return }
+        recBusy = true; recActive = false; recSamples = []; recCompletion = done
+        stopRecItem?.isHidden = false
+        updateStatusTitle()
+        var n = 3
+        captureBtn.title = "⏺ \(n) sn sonra başlıyor – imleci hazırla (iptal için tıkla)"
+        recTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] t in
+            guard let self = self else { t.invalidate(); return }
+            n -= 1
+            if n > 0 { self.captureBtn.title = "⏺ \(n) sn sonra başlıyor – imleci hazırla (iptal için tıkla)"; return }
+            t.invalidate()
+            self.beginCapture()
+        }
+    }
+
+    func beginCapture() {
+        NSSound(named: "Pop")?.play()
+        recActive = true
+        recOrigin = cursorPos(); recStart = Date()
+        recSamples = [[0, 0, 0, 0]]
+        captureBtn.title = "⏺ Yakalanıyor… Esc ile bitir (veya buraya tıkla)"
+        let handle: (NSEvent) -> Void = { [weak self] ev in
+            guard let self = self, self.recActive else { return }
+            if ev.type == .keyDown { if ev.keyCode == 53 { self.finishMacro() }; return }
+            let kind: Double
+            switch ev.type {
+            case .leftMouseDown: kind = 1
+            case .leftMouseDragged: kind = 2
+            case .leftMouseUp: kind = 3
+            default: kind = 0
+            }
+            let p = cursorPos()
+            self.recSamples.append([Double(p.x - self.recOrigin.x), Double(p.y - self.recOrigin.y),
+                                    Date().timeIntervalSince(self.recStart), kind])
+        }
+        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .leftMouseDown, .leftMouseUp, .keyDown]
+        if let g = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: handle) { recMonitors.append(g) }
+        if let l = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { handle($0); return $0 }) { recMonitors.append(l) }
+        recTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: false) { [weak self] _ in self?.finishMacro() }
+    }
+
+    @objc func finishMacro() {
+        guard recBusy else { return }
+        recTimer?.invalidate(); recTimer = nil
+        for m in recMonitors { NSEvent.removeMonitor(m) }
+        recMonitors = []
+        let wasRecording = recActive
+        let done = recCompletion
+        recActive = false; recBusy = false; recCompletion = nil
+        stopRecItem?.isHidden = true
+        if wasRecording {
+            let src = recSamples
+            var s = src
+            if s.count > 400 {
+                let every = s.count / 400 + 1
+                s = src.enumerated().filter { $0.offset == 0 || $0.offset == src.count - 1 || $0.offset % every == 0
+                                              || $0.element[3] == 1 || $0.element[3] == 3 }.map { $0.element }
+            }
+            if s.count >= 2 { done?(s) }
+            NSSound(named: "Pop")?.play()
+        }
+        captureBtn.title = "🎯 Fare hareketi yakala"
+        updateStatusTitle()
+    }
+
+    @objc func captureBtnTapped() {
+        if recBusy { finishMacro(); return }
+        startCapture { [weak self] pts in self?.addCapture(pts) }
+    }
+
+    @discardableResult
+    func addCapture(_ pts: [[Double]]) -> Capture {
+        var idx = captures.count + 1
+        while captures.contains(where: { $0.name == "Hareket \(idx)" }) { idx += 1 }
+        let c = Capture(id: UUID().uuidString, name: "Hareket \(idx)", points: pts)
+        captures.append(c)
+        saveCaptures(); rebuildCapList()
+        return c
+    }
+
+    func saveCaptures() { UserDefaults.standard.set(try? JSONEncoder().encode(captures), forKey: "captures") }
+
+    func rebuildCapList() {
+        for v in capList.arrangedSubviews { capList.removeArrangedSubview(v); v.removeFromSuperview() }
+        if captures.isEmpty {
+            capList.addArrangedSubview(NSTextField(labelWithString: "Henüz yakalanmış hareket yok."))
+        }
+        for c in captures {
+            let name = NSTextField(string: c.name)
+            name.widthAnchor.constraint(equalToConstant: 200).isActive = true
+            name.identifier = NSUserInterfaceItemIdentifier(c.id)
+            name.target = self; name.action = #selector(renameCapture(_:))
+            let dur = c.points.last.map { $0[2] } ?? 0
+            let info = NSTextField(labelWithString: "\(c.points.count) adım · " + String(format: "%.1f sn", dur))
+            info.widthAnchor.constraint(equalToConstant: 130).isActive = true
+            let play = NSButton(title: "▶︎ Dene", target: self, action: #selector(testCapture(_:)))
+            let del = NSButton(title: "Sil", target: self, action: #selector(deleteCapture(_:)))
+            play.identifier = NSUserInterfaceItemIdentifier(c.id); del.identifier = NSUserInterfaceItemIdentifier(c.id)
+            let r = NSStackView(views: [name, info, play, del]); r.spacing = 8
+            capList.addArrangedSubview(r)
+        }
+    }
+
+    @objc func renameCapture(_ f: NSTextField) {
+        guard let id = f.identifier?.rawValue, let i = captures.firstIndex(where: { $0.id == id }) else { return }
+        let n = f.stringValue.trimmingCharacters(in: .whitespaces)
+        if n.isEmpty { f.stringValue = captures[i].name; return }
+        captures[i].name = n; saveCaptures()
+        rows.forEach { $0.refreshGestureTitle() }
+    }
+
+    @objc func testCapture(_ b: NSButton) {
+        guard let id = b.identifier?.rawValue, let c = captures.first(where: { $0.id == id }) else { return }
+        last.stringValue = "2 sn sonra oynatılacak: imleci hareketin başlayacağı yere götür."
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            playMacro(c.points); self?.updateModeUI()
+        }
+    }
+
+    @objc func deleteCapture(_ b: NSButton) {
+        guard let id = b.identifier?.rawValue else { return }
+        captures.removeAll { $0.id == id }
+        saveCaptures(); rebuildCapList()
+        rows.forEach { $0.refreshGestureTitle() }
+    }
+
+    func showCaptureMenu(for row: Row, from b: NSButton) {
+        pickRow = row
+        let menu = NSMenu()
+        for c in captures {
+            let it = NSMenuItem(title: c.name, action: #selector(pickCapture(_:)), keyEquivalent: "")
+            it.target = self; it.representedObject = c.id
+            it.state = (row.capture == c.id) ? .on : .off
+            menu.addItem(it)
+        }
+        if !captures.isEmpty { menu.addItem(.separator()) }
+        let new = NSMenuItem(title: "➕ Yeni hareket yakala…", action: #selector(pickNewCapture), keyEquivalent: "")
+        new.target = self
+        menu.addItem(new)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height), in: b)
+    }
+
+    @objc func pickCapture(_ it: NSMenuItem) {
+        guard let row = pickRow, let id = it.representedObject as? String else { return }
+        row.capture = id; row.gesture = nil
+        commit()
+    }
+
+    @objc func pickNewCapture() {
+        guard let row = pickRow else { return }
+        startCapture { [weak self] pts in
+            guard let self = self else { return }
+            let c = self.addCapture(pts)
+            row.capture = c.id; row.gesture = nil
+            self.commit()
+        }
+    }
+
+    @objc func gestureBtnTapped(_ b: NSButton) {
+        guard let id = b.identifier?.rawValue, let row = rows.first(where: { $0.key == id }) else { return }
+        if row.mouse == "macro" { showCaptureMenu(for: row, from: b); return }
+        if drawGesture(for: row) { commit() }
+    }
+
     @objc func appBtnTapped(_ b: NSButton) {
         guard let id = b.identifier?.rawValue, let row = rows.first(where: { $0.key == id }) else { return }
         if chooseApp(for: row) { commit() }
     }
 
     func updateStatusTitle() {
-        statusItem?.button?.title = (assigning ? " ●" : "") + (layerActive ? " ②" : "")
+        guard let b = statusItem?.button else { return }
+        // Profil numarası menü çubuğuna sığabilecek en büyük puntoyla yazılır
+        let size = NSStatusBar.system.thickness - 2
+        let t = (assigning ? " ●" : "") + (recBusy ? " ⏺" : "") + " \(profile + 1)"
+        b.imagePosition = .imageLeft
+        b.attributedTitle = NSAttributedString(string: t, attributes: [
+            .font: NSFont.systemFont(ofSize: size, weight: .heavy)])
     }
 
     func updateProfileUI() {
-        profLbl.stringValue = layerActive ? "Aktif profil: Profil 2" : "Aktif profil: Profil 1"
+        profLbl.stringValue = "Aktif profil: Profil \(profile + 1)"
         updateStatusTitle()
     }
 
     func setProfile(_ n: Int) {
-        layerActive = (n == 1)
+        profile = n % profileCount
         updateProfileUI()
         NSSound(named: "Pop")?.play()
     }
 
-    @objc func switchProfile() { setProfile(layerActive ? 0 : 1) }
-
-    @objc func holdTimeChanged(_ sl: NSSlider) {
-        holdTime = (sl.doubleValue * 10).rounded() / 10
-        holdLbl.stringValue = holdTime <= 0.05 ? "anında" : String(format: "%.1f sn", holdTime)
-        UserDefaults.standard.set(holdTime, forKey: "holdTime")
-    }
+    @objc func switchProfile() { setProfile(profile + 1) }
 
     func updateLayerUI() {
         if pickingLayer { layerBtn.title = "Kumandada bir tuşa bas…"; return }
@@ -519,7 +899,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func pickLayerTapped() { pickingLayer = true; updateLayerUI() }
 
     @objc func clearLayer() {
-        layerKey = nil; layerActive = false; pickingLayer = false; updateProfileUI()
+        layerKey = nil; profile = 0; pickingLayer = false; updateProfileUI()
         UserDefaults.standard.removeObject(forKey: "layerKey")
         updateLayerUI()
     }
@@ -540,7 +920,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func toggleAssign() {
         assigning.toggle()
-        Hold.stop(); layerActive = false; pickingLayer = false; updateLayerUI(); updateProfileUI()
+        Hold.stop(); profile = 0; pickingLayer = false; updateLayerUI(); updateProfileUI()
         activeBox?.refresh(); activeBox = nil
         if !assigning { clearEmpty(); commit() }
         updateModeUI()
@@ -571,13 +951,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = menuIcon()
         statusItem.button?.toolTip = "Mac Kumanda"
+        updateStatusTitle()
         let menu = NSMenu()
         let show = NSMenuItem(title: "Pencereyi aç", action: #selector(showWindow), keyEquivalent: "")
         show.target = self
         let quit = NSMenuItem(title: "Çıkış", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let prof = NSMenuItem(title: "Profili değiştir", action: #selector(switchProfile), keyEquivalent: "")
         prof.target = self
-        menu.addItem(prof); menu.addItem(show); menu.addItem(.separator()); menu.addItem(quit)
+        stopRecItem = NSMenuItem(title: "⏹ Hareket kaydını bitir", action: #selector(finishMacro), keyEquivalent: "")
+        stopRecItem.target = self; stopRecItem.isHidden = true
+        menu.addItem(stopRecItem); menu.addItem(prof); menu.addItem(show); menu.addItem(.separator()); menu.addItem(quit)
         statusItem.menu = menu
     }
 
@@ -586,8 +969,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch mo {
             case "app": if down, let path = m.app { openApp(path) }
             case "left", "right", "middle", "double": if down { mouseClick(mo) }
-            case "videoNext": if down { videoSwipe(next: true) }
-            case "videoPrev": if down { videoSwipe(next: false) }
+            case "videoNext": if down { swipe(.down) }
+            case "videoPrev": if down { swipe(.up) }
+            case "swipeRight": if down { swipe(.right) }
+            case "swipeLeft": if down { swipe(.left) }
+            case "gesture": if down, let g = m.gesture { playGesture(g) }
+            case "macro":
+                if down {
+                    if let id = m.capture, let c = captures.first(where: { $0.id == id }) { playMacro(c.points) }
+                    else if let g = m.gesture { playMacro(g) }
+                }
             default: if down { Hold.press(base, mo) } else { Hold.release(base) }
             }
             return
@@ -618,37 +1009,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Profil tuşu: uzun basınca profil değişir ve kalır; kısa basış kendi atamasını çalıştırır
+        // Profil tuşu: her basışta sıradaki profile geçer (Profil 1 → 2 → 3 → 1)
         if base == layerKey {
-            if down {
-                if layerDown { return } // tekrar eden sinyalleri yok say
-                layerDown = true; layerFired = false
-                layerTimer?.invalidate()
-                if holdTime <= 0.05 {   // gecikme 0: tuşa basar basmaz geç
-                    layerFired = true
-                    setProfile(layerActive ? 0 : 1)
-                    return
-                }
-                let t = Timer(timeInterval: holdTime, repeats: false) { [weak self] _ in
-                    guard let self = self, self.layerDown else { return }
-                    self.layerFired = true
-                    self.setProfile(self.layerActive ? 0 : 1)
-                }
-                RunLoop.main.add(t, forMode: .common)
-                layerTimer = t
-            } else {
-                layerTimer?.invalidate(); layerTimer = nil
-                let wasDown = layerDown
-                layerDown = false
-                if wasDown && !layerFired, let m = table[base + "|\(layerActive ? 1 : 0)"] {
-                    execute(m, base, true); execute(m, base, false)
-                }
-            }
+            guard down else { return }
+            let now = Date()
+            if now.timeIntervalSince(lastProfileSwitch) < 0.25 { return } // tekrar eden sinyalleri yok say
+            lastProfileSwitch = now
+            setProfile(profile + 1)
             return
         }
 
         if !down { Hold.release(base); return }
-        guard let m = table[base + "|\(layerActive ? 1 : 0)"] else { return }
+        guard let m = table[base + "|\(profile)"] else { return }
         execute(m, base, true)
     }
 
@@ -659,6 +1031,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         row.act.identifier = NSUserInterfaceItemIdentifier(row.key)
         row.appBtn.target = self; row.appBtn.action = #selector(appBtnTapped(_:))
         row.appBtn.identifier = NSUserInterfaceItemIdentifier(row.key)
+        row.gestureBtn.target = self; row.gestureBtn.action = #selector(gestureBtnTapped(_:))
+        row.gestureBtn.identifier = NSUserInterfaceItemIdentifier(row.key)
         row.del.target = self; row.del.action = #selector(deleteTapped(_:))
         row.del.identifier = NSUserInterfaceItemIdentifier(row.key)
         rows.append(row)
@@ -678,8 +1052,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for r in rows {
             if let mo = r.mouse {
                 if mo == "app" && r.appPath == nil { continue }
+                if mo == "gesture" && r.gesture == nil { continue }
+                if mo == "macro" && r.gesture == nil && r.capture == nil { continue }
                 table[r.key] = Mapping(device: r.device, page: r.page, usage: r.usage, k1: -1, k2: nil,
-                                       mouse: mo, app: r.appPath, layer: r.layer)
+                                       mouse: mo, app: r.appPath, layer: r.layer, gesture: r.gesture, capture: r.capture)
                 continue
             }
             let k1 = r.b1.code ?? r.b2.code

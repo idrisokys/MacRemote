@@ -48,20 +48,25 @@ Uygulama **ikon modunda** çalışır: Dock'ta görünmez, yalnızca menü çubu
 
 Atama modundayken kumandadaki tuşlar atamalarını çalıştırmaz, böylece kutuları doldururken yanlışlıkla işlem tetiklenmez.
 
-## Profiller (uzun basınca ikinci profil)
-Kumandada bir tuşu **profil tuşu** olarak seçersen, ona **uzun basınca** **Profil 2**'ye geçilir ve orada kalınır. Tekrar uzun basınca **Profil 1**'e dönülür. Geçişte kısa bir "pop" sesi çalar, menü çubuğu ikonunun yanında Profil 2 aktifken ② görünür ve pencerede "Aktif profil" yazar.
+## Profiller (3 profil, tek basışla geçiş)
+Kumandada bir tuşu **profil tuşu** olarak seçersen, ona **her basışta** sıradaki profile geçilir: Profil 1 → Profil 2 → Profil 3 → Profil 1. Geçişte kısa bir "pop" sesi çalar. Aktif profilin numarası menü çubuğu ikonunun yanında büyük puntoyla görünür ve pencerede "Aktif profil" yazar.
 
 1. Pencerede **Profil tuşu** satırındaki düğmeye tıkla ve kumandada profil tuşu olacak tuşa bas.
-2. **Geçiş gecikmesi** çubuğuyla tuş kaç saniye basılı tutulunca geçileceğini ayarla (varsayılan 0,3 sn). **0 (anında)** yaparsan tuşa basar basmaz profil değişir. Bu durumda tuşun kısa basış eylemi çalışmaz.
-3. Atama listesinin üstündeki **Profil 1 / Profil 2** seçiciyle düzenlediğin profili değiştir. **Atamayı başlat** modunda kumandada bastığın tuşlar seçili profile eklenir.
-4. Profil tuşuna kısa basarsan (süre dolmadan bırakırsan) aktif profilde o tuşa atanmış eylem çalışır.
-5. Kumandaya ulaşamazsan menü çubuğu ikonundan **Profili değiştir** ile elle geçiş yapabilirsin.
+2. Atama listesinin üstündeki **Profil 1 / Profil 2 / Profil 3** seçiciyle düzenlediğin profili değiştir. **Atamayı başlat** modunda kumandada bastığın tuşlar seçili profile eklenir.
+3. Profil tuşu yalnızca profil değiştirir, ona ayrıca eylem atanmaz.
+4. Kumandaya ulaşamazsan menü çubuğu ikonundan **Profili değiştir** ile elle geçiş yapabilirsin.
 
 ## Fare modu
 Her satırdaki açılır menüden klavye tuşu yerine bir **fare eylemi** seçebilirsin:
 sol tık, sağ tık, orta tık, çift tık, tekerlek yukarı/aşağı ve imleci yukarı/aşağı/sola/sağa hareket ettirme.
 
-**Video kaydırma (TikTok / Instagram Reels):** menüden **📱 Sonraki video (aşağı kaydır)** veya **📱 Önceki video (yukarı kaydır)** seçersen tuşa her basışta tek vuruşluk bir kaydırma yapılır ve bir sonraki/önceki videoya geçilir. **Video kaydırma** çubuğu kaydırma miktarını ayarlar; video tam geçmiyorsa artır, birden fazla video atlıyorsa azalt. Kaydırma, imlecin üzerinde olduğu pencereye gider.
+**Kaydırma (TikTok / Instagram Reels vb.):** menüden **📱 Aşağı kaydır**, **📱 Yukarı kaydır**, **📱 Sağa kaydır** veya **📱 Sola kaydır** seçersen tuşa her basışta tek vuruşluk bir kaydırma (tekerlek olayı) yapılır. Mesafeyi **Yukarı/aşağı kaydırma** ve **Sağa/sola kaydırma** çubuklarıyla ayrı ayrı ayarlarsın (varsayılan 120). Yön ters çıkarsa iki seçeneğin atamalarını yer değiştir.
+
+**✍️ Hareket çiz (kendi hareketin):** menüden **✍️ Hareket çiz**'i seçince touchpad benzeri bir kutu açılır. Fareyi basılı tutup hareketi çiz (ör. aşağıdan yukarı çizgi), **Kaydet**'e bas. Kumanda tuşuna basınca bu hareket, imlecin o anki konumundan başlayarak fareyle sürükleme olarak yeniden oynatılır ve imleç yerine döner. Tekerlek kaydırmasına tepki vermeyen uygulamalarda (iPhone Yansıtma, emülatör vb.) bunu kullan. Çizimi değiştirmek için satırdaki hareket düğmesine tıkla.
+
+**🎯 Fare hareketi yakala:** ana penceredeki **Fare hareketi yakala** düğmesine bas. 3 saniyelik geri sayımdan sonra yakalama başlar. Fareyi/touchpad'i ekranda normal kullanır gibi hareket ettir (tıklama ve sürükleme de yakalanır) ve **Esc** ile (veya menü çubuğu ikonu → **⏹ Hareket kaydını bitir**, ya da düğmeye tekrar tıklayarak) bitir. 20 saniyede kendiliğinden de biter. Yakalanan hareket **Yakalanan fare hareketleri** listesine eklenir; adını değiştirebilir, **▶︎ Dene** ile 2 saniye sonra oynatabilir veya silebilirsin.
+
+Atamak için bir satırın açılır menüsünden **🎯 Yakalanan hareket**'i seç ve listeden hareketi seç (oradan **➕ Yeni hareket yakala…** ile de yakalayabilirsin). Kumanda tuşuna basınca hareket, imlecin o anki konumundan başlayarak aynı hızda taklit edilir ve imleç yerine döner (en fazla 8 sn). Aynı hareketi birden fazla tuşa atayabilirsin. Hareketler başlangıç noktasına göre göreli kaydedilir, o yüzden imleci hep aynı yere (ör. videonun üstüne) koy.
 
 **Uygulama kısayolu:** menüden **🚀 Uygulama aç**'ı seçip bir `.app` dosyası seç. O kumanda tuşu uygulamayı açar (zaten açıksa öne getirir). Uygulamayı değiştirmek için satırdaki uygulama düğmesine tıkla.
 
