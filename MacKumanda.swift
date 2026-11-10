@@ -85,15 +85,16 @@ let mouseOptions: [(String, String)] = [
     ("", "Klavye tuşu"),
     ("left", "🖱 Sol tık"), ("right", "🖱 Sağ tık"), ("middle", "🖱 Orta tık"), ("double", "🖱 Çift tık"),
     ("scrollUp", "🖱 Tekerlek yukarı"), ("scrollDown", "🖱 Tekerlek aşağı"),
-    ("videoNext", "📱 Sonraki video (aşağı kaydır)"), ("videoPrev", "📱 Önceki video (yukarı kaydır)"),
+    ("videoNext", "📱 Aşağı kaydır"), ("videoPrev", "📱 Yukarı kaydır"),
+    ("swipeRight", "📱 Sağa kaydır"), ("swipeLeft", "📱 Sola kaydır"),
     ("moveUp", "🖱 İmleç yukarı"), ("moveDown", "🖱 İmleç aşağı"),
     ("moveLeft", "🖱 İmleç sola"), ("moveRight", "🖱 İmleç sağa"),
     ("app", "🚀 Uygulama aç")
 ]
 var moveSpeed: Double = UserDefaults.standard.object(forKey: "moveSpeed") as? Double ?? 12
-var holdTime: Double = UserDefaults.standard.object(forKey: "holdTime") as? Double ?? 0.3
 var scrollSpeed: Double = UserDefaults.standard.object(forKey: "scrollSpeed") as? Double ?? 20
-var swipeAmount: Double = UserDefaults.standard.object(forKey: "swipeAmount") as? Double ?? 500
+var swipeAmount: Double = UserDefaults.standard.object(forKey: "swipeAmount") as? Double ?? 500      // yukarı/aşağı
+var swipeAmountH: Double = UserDefaults.standard.object(forKey: "swipeAmountH") as? Double ?? 500     // sağa/sola
 
 func cursorPos() -> CGPoint { CGEvent(source: nil)?.location ?? .zero }
 
@@ -142,17 +143,26 @@ func mouseScroll(_ amount: Int32) {
             wheelCount: 1, wheel1: amount, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
 }
 
+func mouseScrollH(_ amount: Int32) {
+    CGEvent(scrollWheelEvent2Source: CGEventSource(stateID: .hidSystemState), units: .pixel,
+            wheelCount: 2, wheel1: 0, wheel2: amount, wheel3: 0)?.post(tap: .cghidEventTap)
+}
+
 // TikTok / Instagram Reels gibi videoları tek vuruşta kaydırır (bir basış = bir video)
 var lastSwipe = Date.distantPast
-func videoSwipe(next: Bool) {
+enum SwipeDir { case down, up, right, left }
+func swipe(_ dir: SwipeDir) {
     let now = Date()
     if now.timeIntervalSince(lastSwipe) < 0.45 { return } // animasyon bitmeden ikinci kaydırmayı yok say
     lastSwipe = now
     let steps = 8
-    let per = Int32(max(1, swipeAmount / Double(steps)))
+    let vertical = (dir == .down || dir == .up)
+    let per = Int32(max(1, (vertical ? swipeAmount : swipeAmountH) / Double(steps)))
+    // aşağı/sağa kaydır: içerik ilerler (negatif), yukarı/sola kaydır: geri döner (pozitif)
+    let signed: Int32 = (dir == .down || dir == .right) ? -per : per
     for i in 0..<steps {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.012 * Double(i)) {
-            mouseScroll(next ? -per : per)
+            if vertical { mouseScroll(signed) } else { mouseScrollH(signed) }
         }
     }
 }
@@ -301,18 +311,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var assigning = false
     var editLayer = 0
     var layerKey: String? = UserDefaults.standard.string(forKey: "layerKey")
-    var layerActive = false, layerDown = false, layerFired = false, pickingLayer = false
-    var layerTimer: Timer?
-    let holdLbl = NSTextField(labelWithString: "")
+    var profile = 0                      // 0, 1, 2 -> Profil 1, 2, 3
+    let profileCount = 3
+    var pickingLayer = false
+    var lastProfileSwitch = Date.distantPast
     let profLbl = NSTextField(labelWithString: "Aktif profil: Profil 1")
     let layerBtn = NSButton(title: "Seç…", target: nil, action: nil)
     let layerClear = NSButton(title: "Kaldır", target: nil, action: nil)
-    let seg = NSSegmentedControl(labels: ["Profil 1 (normal)", "Profil 2 (profil tuşuna uzun basınca)"],
+    let seg = NSSegmentedControl(labels: ["Profil 1", "Profil 2", "Profil 3"],
                                  trackingMode: .selectOne, target: nil, action: nil)
     var hidErr: IOReturn = 0
     let moveLbl = NSTextField(labelWithString: "")
     let scrollLbl = NSTextField(labelWithString: "")
     let swipeLbl = NSTextField(labelWithString: "")
+    let swipeLblH = NSTextField(labelWithString: "")
     let assignBtn = NSButton(title: "▶︎ Atamayı başlat", target: nil, action: nil)
     var statusItem: NSStatusItem!
     let popup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -354,7 +366,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "1) “Atamayı başlat”a bas, kumandada bir tuşa bas: satırı belirir.\n" +
             "2) Klavye tuşu için kutulara tıkla ve tuş bas (iki kutu = 1. tuş basılı tutulup 2. tuşa basılır, ör. ⌘ + V).\n" +
             "3) Fare, video kaydırma (TikTok / Reels) veya uygulama için açılır menüden seçim yap.\n" +
-            "4) Profil tuşu: seçtiğin tuşa basılı tutunca (gecikme çubuğu 0 ise basar basmaz) Profil 2'ye geçilir ve orada kalınır, tekrar basılı tutunca Profil 1'e dönülür.\n" +
+            "4) Profil tuşu: seçtiğin tuşa her basışta sıradaki profile geçilir (1 → 2 → 3 → 1).\n" +
             "5) Bitince “Atamayı bitir”e bas. Bundan sonra yalnızca atanmış tuşlar çalışır.")
         hint.widthAnchor.constraint(equalToConstant: 720).isActive = true
 
@@ -368,20 +380,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sl.widthAnchor.constraint(equalToConstant: 240).isActive = true
             lbl.stringValue = String(Int(v))
             let t = NSTextField(labelWithString: title)
-            t.widthAnchor.constraint(equalToConstant: 130).isActive = true
+            t.widthAnchor.constraint(equalToConstant: 160).isActive = true
             let r = NSStackView(views: [t, sl, lbl]); r.spacing = 8
             return r
         }
         let moveRow = speedRow("İmleç hızı:", 1, 40, moveSpeed, #selector(moveSpeedChanged(_:)), moveLbl)
         let scrollRow = speedRow("Tekerlek hızı:", 1, 80, scrollSpeed, #selector(scrollSpeedChanged(_:)), scrollLbl)
-        let swipeRow = speedRow("Video kaydırma:", 100, 1500, swipeAmount, #selector(swipeAmountChanged(_:)), swipeLbl)
+        let swipeRow = speedRow("Yukarı/aşağı kaydırma:", 100, 1500, swipeAmount, #selector(swipeAmountChanged(_:)), swipeLbl)
+        let swipeRowH = speedRow("Sağa/sola kaydırma:", 100, 1500, swipeAmountH, #selector(swipeAmountHChanged(_:)), swipeLblH)
 
         layerBtn.target = self; layerBtn.action = #selector(pickLayerTapped)
         layerClear.target = self; layerClear.action = #selector(clearLayer)
         layerBtn.bezelStyle = .rounded; layerClear.bezelStyle = .rounded
         layerBtn.widthAnchor.constraint(equalToConstant: 300).isActive = true
-        let holdRow = speedRow("Geçiş gecikmesi:", 0.0, 2.0, holdTime, #selector(holdTimeChanged(_:)), holdLbl)
-        holdLbl.stringValue = holdTime <= 0.05 ? "anında" : String(format: "%.1f sn", holdTime)
         let layerRow = NSStackView(views: [NSTextField(labelWithString: "Profil tuşu:"), layerBtn, layerClear])
         layerRow.spacing = 8
         seg.target = self; seg.action = #selector(segChanged)
@@ -390,12 +401,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         assignBtn.target = self; assignBtn.action = #selector(toggleAssign)
         assignBtn.bezelStyle = .rounded; assignBtn.controlSize = .large
-        let root = NSStackView(views: [perm, assignBtn, devRow, moveRow, scrollRow, swipeRow, layerRow, holdRow, hint, last, profLbl, seg, list])
+        let root = NSStackView(views: [perm, assignBtn, devRow, moveRow, scrollRow, swipeRow, swipeRowH, layerRow, hint, last, profLbl, seg, list])
         root.orientation = .vertical; root.alignment = .leading; root.spacing = 14
         root.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         list.orientation = .vertical; list.alignment = .leading; list.spacing = 8
 
-        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 800),
+        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 830),
                        styleMask: [.titled, .closable], backing: .buffered, defer: false)
         win.title = "Mac Kumanda"
         win.isReleasedWhenClosed = false
@@ -449,6 +460,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scrollSpeed = s.doubleValue; scrollLbl.stringValue = String(Int(s.doubleValue))
         UserDefaults.standard.set(scrollSpeed, forKey: "scrollSpeed")
     }
+    @objc func swipeAmountHChanged(_ s: NSSlider) {
+        swipeAmountH = s.doubleValue; swipeLblH.stringValue = String(Int(s.doubleValue))
+        UserDefaults.standard.set(swipeAmountH, forKey: "swipeAmountH")
+    }
     @objc func swipeAmountChanged(_ s: NSSlider) {
         swipeAmount = s.doubleValue; swipeLbl.stringValue = String(Int(s.doubleValue))
         UserDefaults.standard.set(swipeAmount, forKey: "swipeAmount")
@@ -482,27 +497,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func updateStatusTitle() {
-        statusItem?.button?.title = (assigning ? " ●" : "") + (layerActive ? " ②" : "")
+        guard let b = statusItem?.button else { return }
+        // Profil numarası menü çubuğuna sığabilecek en büyük puntoyla yazılır
+        let size = NSStatusBar.system.thickness - 2
+        let t = (assigning ? " ●" : "") + " \(profile + 1)"
+        b.imagePosition = .imageLeft
+        b.attributedTitle = NSAttributedString(string: t, attributes: [
+            .font: NSFont.systemFont(ofSize: size, weight: .heavy)])
     }
 
     func updateProfileUI() {
-        profLbl.stringValue = layerActive ? "Aktif profil: Profil 2" : "Aktif profil: Profil 1"
+        profLbl.stringValue = "Aktif profil: Profil \(profile + 1)"
         updateStatusTitle()
     }
 
     func setProfile(_ n: Int) {
-        layerActive = (n == 1)
+        profile = n % profileCount
         updateProfileUI()
         NSSound(named: "Pop")?.play()
     }
 
-    @objc func switchProfile() { setProfile(layerActive ? 0 : 1) }
-
-    @objc func holdTimeChanged(_ sl: NSSlider) {
-        holdTime = (sl.doubleValue * 10).rounded() / 10
-        holdLbl.stringValue = holdTime <= 0.05 ? "anında" : String(format: "%.1f sn", holdTime)
-        UserDefaults.standard.set(holdTime, forKey: "holdTime")
-    }
+    @objc func switchProfile() { setProfile(profile + 1) }
 
     func updateLayerUI() {
         if pickingLayer { layerBtn.title = "Kumandada bir tuşa bas…"; return }
@@ -519,7 +534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func pickLayerTapped() { pickingLayer = true; updateLayerUI() }
 
     @objc func clearLayer() {
-        layerKey = nil; layerActive = false; pickingLayer = false; updateProfileUI()
+        layerKey = nil; profile = 0; pickingLayer = false; updateProfileUI()
         UserDefaults.standard.removeObject(forKey: "layerKey")
         updateLayerUI()
     }
@@ -540,7 +555,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func toggleAssign() {
         assigning.toggle()
-        Hold.stop(); layerActive = false; pickingLayer = false; updateLayerUI(); updateProfileUI()
+        Hold.stop(); profile = 0; pickingLayer = false; updateLayerUI(); updateProfileUI()
         activeBox?.refresh(); activeBox = nil
         if !assigning { clearEmpty(); commit() }
         updateModeUI()
@@ -571,6 +586,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = menuIcon()
         statusItem.button?.toolTip = "Mac Kumanda"
+        updateStatusTitle()
         let menu = NSMenu()
         let show = NSMenuItem(title: "Pencereyi aç", action: #selector(showWindow), keyEquivalent: "")
         show.target = self
@@ -586,8 +602,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch mo {
             case "app": if down, let path = m.app { openApp(path) }
             case "left", "right", "middle", "double": if down { mouseClick(mo) }
-            case "videoNext": if down { videoSwipe(next: true) }
-            case "videoPrev": if down { videoSwipe(next: false) }
+            case "videoNext": if down { swipe(.down) }
+            case "videoPrev": if down { swipe(.up) }
+            case "swipeRight": if down { swipe(.right) }
+            case "swipeLeft": if down { swipe(.left) }
             default: if down { Hold.press(base, mo) } else { Hold.release(base) }
             }
             return
@@ -618,37 +636,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Profil tuşu: uzun basınca profil değişir ve kalır; kısa basış kendi atamasını çalıştırır
+        // Profil tuşu: her basışta sıradaki profile geçer (Profil 1 → 2 → 3 → 1)
         if base == layerKey {
-            if down {
-                if layerDown { return } // tekrar eden sinyalleri yok say
-                layerDown = true; layerFired = false
-                layerTimer?.invalidate()
-                if holdTime <= 0.05 {   // gecikme 0: tuşa basar basmaz geç
-                    layerFired = true
-                    setProfile(layerActive ? 0 : 1)
-                    return
-                }
-                let t = Timer(timeInterval: holdTime, repeats: false) { [weak self] _ in
-                    guard let self = self, self.layerDown else { return }
-                    self.layerFired = true
-                    self.setProfile(self.layerActive ? 0 : 1)
-                }
-                RunLoop.main.add(t, forMode: .common)
-                layerTimer = t
-            } else {
-                layerTimer?.invalidate(); layerTimer = nil
-                let wasDown = layerDown
-                layerDown = false
-                if wasDown && !layerFired, let m = table[base + "|\(layerActive ? 1 : 0)"] {
-                    execute(m, base, true); execute(m, base, false)
-                }
-            }
+            guard down else { return }
+            let now = Date()
+            if now.timeIntervalSince(lastProfileSwitch) < 0.25 { return } // tekrar eden sinyalleri yok say
+            lastProfileSwitch = now
+            setProfile(profile + 1)
             return
         }
 
         if !down { Hold.release(base); return }
-        guard let m = table[base + "|\(layerActive ? 1 : 0)"] else { return }
+        guard let m = table[base + "|\(profile)"] else { return }
         execute(m, base, true)
     }
 
