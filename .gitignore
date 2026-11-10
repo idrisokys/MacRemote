@@ -1,6 +1,6 @@
 # Derleme çıktısı
 build/
-MacKumanda-macos.zip
+MacRemote-macos.zip
 *.o
 *.dSYM/
 .build/

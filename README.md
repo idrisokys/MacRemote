@@ -1,4 +1,4 @@
-# Mac Kumanda
+# Mac Remote
 
 Bluetooth kumandanın (ör. eski Xiaomi Mi TV Stick kumandası) tuşlarını Mac'te algılayıp istediğin **tuşa veya tuş kombinasyonuna** (ör. `⌘V`) çeviren küçük, tek dosyalık macOS uygulaması.
 
@@ -13,7 +13,7 @@ Bluetooth kumandanın (ör. eski Xiaomi Mi TV Stick kumandası) tuşlarını Mac
 Repo her `main` push'unda GitHub Actions ile otomatik derlenir.
 
 1. Repo sayfasında **Actions** sekmesine gir, son çalışmayı aç.
-2. Sayfanın altındaki **Artifacts** bölümünden `MacKumanda-macos` dosyasını indir ve zip'ten çıkar.
+2. Sayfanın altındaki **Artifacts** bölümünden `MacRemote-macos` dosyasını indir ve zip'ten çıkar.
 
 Kalıcı bir sürüm yayınlamak için etiket at, `.app` dosyası **Releases** sayfasına otomatik eklenir:
 ```bash
@@ -25,42 +25,40 @@ Elle başlatmak için: Actions → Build → **Run workflow**.
 ## İlk açılış (Gatekeeper)
 Uygulama Apple geliştirici hesabıyla imzalanmadığı için macOS ilk açılışta engelleyebilir. Şunlardan birini yap:
 - Uygulamaya sağ tık → **Aç** → **Aç**, veya
-- Terminal'de: `xattr -dr com.apple.quarantine "Mac Kumanda.app"`
+- Terminal'de: `xattr -dr com.apple.quarantine "Mac Remote.app"`
 
-Sonra **Sistem Ayarları → Gizlilik ve Güvenlik** altında **Erişilebilirlik** ve **Giriş İzleme** bölümlerinde *Mac Kumanda*'ı etkinleştirip uygulamayı yeniden başlat.
+Sonra **Sistem Ayarları → Gizlilik ve Güvenlik** altında **Erişilebilirlik** ve **Giriş İzleme** bölümlerinde *Mac Remote*'ı etkinleştirip uygulamayı yeniden başlat.
 
 ## Yerelde derleme
 Xcode Command Line Tools gerekir (`xcode-select --install`).
 ```bash
 ./build.sh
-open "build/Mac Kumanda.app"
+open "build/Mac Remote.app"
 ```
 
 ## Kullanım
-Uygulama **ikon modunda** çalışır: Dock'ta görünmez, yalnızca menü çubuğunda bir kumanda ikonu olur. Ayarlar için ikona tıklayıp **Pencereyi aç**'ı seç. Pencereyi kapatsan da arka planda çalışmaya devam eder (kapatmak için menü çubuğu ikonu → **Çıkış**).
+Uygulama **ikon modunda** çalışır: Dock'ta görünmez, yalnızca menü çubuğunda bir kumanda ikonu olur. İkona tıklayınca pencere doğrudan açılır, pencerenin dışına (başka bir pencereye/uygulamaya) tıklayınca kaybolur, ikona tekrar tıklayınca yeniden açılır. Uygulamayı kapatmak için pencerenin sağ üstündeki **Çıkış** düğmesini kullan. Pencere 350×700 boyutundadır.
 
 1. Kumandayı Mac'e Bluetooth ile eşleştir.
 2. Pencerede **Atamayı başlat**'a bas. Atama sırasında ikonun yanında ● görünür.
-3. Kumandada bir tuşa bas, pencerede o tuşun satırı belirir.
-4. Satırdaki **ilk kutuya** tıkla ve klavyeden bir tuş bas. Tek kutu doluysa kumanda tuşu o tuş gibi çalışır.
+3. Kumandada bir tuşa bas, pencerede o tuşun kartı belirir.
+4. Kartta **ilk kutuya** tıkla ve klavyeden bir tuş bas. Tek kutu doluysa kumanda tuşu o tuş gibi çalışır.
 5. **İkinci kutuya** da tıklayıp bir tuş basarsan 1. tuş basılı tutulup 2. tuşa basılır. Örnek: 1. kutu `⌘ Command`, 2. kutu `V` → **Yapıştır**.
-6. İşin bitince **Atamayı bitir**'e bas. Boş satırlar silinir ve bundan sonra yalnızca atanan tuşlar çalışır, başka tuşlar listede görünmez.
+6. İşin bitince **Atamayı bitir**'e bas. Boş kartlar silinir ve bundan sonra yalnızca atanan tuşlar çalışır.
 
 Atama modundayken kumandadaki tuşlar atamalarını çalıştırmaz, böylece kutuları doldururken yanlışlıkla işlem tetiklenmez.
 
-## Profiller (3 profil, tek basışla geçiş)
-Kumandada bir tuşu **profil tuşu** olarak seçersen, ona **her basışta** sıradaki profile geçilir: Profil 1 → Profil 2 → Profil 3 → Profil 1. Geçişte kısa bir "pop" sesi çalar. Aktif profilin numarası menü çubuğu ikonunun yanında büyük puntoyla görünür ve pencerede "Aktif profil" yazar.
+## Profiller (2 profil, tek basışla geçiş)
+**Atamayı başlat** düğmesinin sağındaki **Profil tuşu** düğmesine tıklayıp kumandada bir tuşa basarak profil tuşunu seç (yanındaki ✕ ile kaldırılır). O tuşa **her basışta** sıradaki profile geçilir: Profil 1 → Profil 2 → Profil 1. Geçişte kısa bir "pop" sesi çalar; aktif profil pencerede "Aktif profil" satırında yazar.
 
-1. Pencerede **Profil tuşu** satırındaki düğmeye tıkla ve kumandada profil tuşu olacak tuşa bas.
-2. Atama listesinin üstündeki **Profil 1 / Profil 2 / Profil 3** seçiciyle düzenlediğin profili değiştir. **Atamayı başlat** modunda kumandada bastığın tuşlar seçili profile eklenir.
-3. Profil tuşu yalnızca profil değiştirir, ona ayrıca eylem atanmaz.
-4. Kumandaya ulaşamazsan menü çubuğu ikonundan **Profili değiştir** ile elle geçiş yapabilirsin.
+- **Profil 1 / Profil 2** seçiciyle düzenlediğin profili değiştirirsin. **Atamayı başlat** modunda kumandada bastığın tuşlar seçili profile eklenir.
+- Profil tuşu yalnızca profil değiştirir, ona ayrıca eylem atanmaz.
 
 ## Fare modu
 Her satırdaki açılır menüden klavye tuşu yerine bir **fare eylemi** seçebilirsin:
 sol tık, sağ tık, orta tık, çift tık, tekerlek yukarı/aşağı ve imleci yukarı/aşağı/sola/sağa hareket ettirme.
 
-**Kaydırma (TikTok / Instagram Reels vb.):** menüden **📱 Aşağı kaydır**, **📱 Yukarı kaydır**, **📱 Sağa kaydır** veya **📱 Sola kaydır** seçersen tuşa her basışta tek vuruşluk bir kaydırma (tekerlek olayı) yapılır. Mesafeyi **Yukarı/aşağı kaydırma** ve **Sağa/sola kaydırma** çubuklarıyla ayrı ayrı ayarlarsın (varsayılan 120; çubuk 1–3000, yanındaki sayı kutusuna 1–20000 arası değer yazabilirsin). Yön ters çıkarsa iki seçeneğin atamalarını yer değiştir.
+**Kaydırma (TikTok / Instagram Reels vb.):** menüden **📱 Aşağı kaydır**, **📱 Yukarı kaydır**, **📱 Sağa kaydır** veya **📱 Sola kaydır** seçersen tuşa her basışta tek vuruşluk bir kaydırma (tekerlek olayı) yapılır. Mesafeyi **Yukarı/aşağı kaydırma** ve **Sağa/sola kaydırma** çubuklarıyla ayrı ayrı ayarlarsın (varsayılan 120; 1–1000 arası). Yön ters çıkarsa iki seçeneğin atamalarını yer değiştir.
 
 **✍️ Hareket çiz (kendi hareketin):** menüden **✍️ Hareket çiz**'i seçince touchpad benzeri bir kutu açılır. Fareyi basılı tutup hareketi çiz (ör. aşağıdan yukarı çizgi), **Kaydet**'e bas. Kumanda tuşuna basınca bu hareket, imlecin o anki konumundan başlayarak fareyle sürükleme olarak yeniden oynatılır ve imleç yerine döner. Tekerlek kaydırmasına tepki vermeyen uygulamalarda (iPhone Yansıtma, emülatör vb.) bunu kullan. Çizimi değiştirmek için satırdaki hareket düğmesine tıkla.
 
@@ -77,7 +75,7 @@ Kumandalar çoğu zaman tuşları klavye olarak değil HID medya/tüketici sinya
 ## Bilinen sınırlamalar
 - Kumanda tuşunun orijinal işlevi engellenmez (ör. ses tuşu hem sesi değiştirir hem atamanı çalıştırır). Menü/ok/OK tuşlarında genelde sorun olmaz.
 - Tuş basılı tutulunca tekrarlamaz, her basış tek vuruştur.
-- Atamalar yalnızca uygulama çalışırken (menü çubuğunda göründüğü sürece) geçerlidir.
+- Atamalar yalnızca uygulama çalışırken (menü çubuğunda göründüğü sürece) geçerlidir. Çıkış yapınca atamalar çalışmaz.
 - Harici (Apple dışı) Bluetooth klavyeler de satır olarak görünür.
 
 ## Lisans

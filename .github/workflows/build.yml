@@ -20,16 +20,16 @@ jobs:
         run: ./build.sh
 
       - name: Zip oluştur
-        run: ditto -c -k --keepParent "build/Mac Kumanda.app" MacKumanda-macos.zip
+        run: ditto -c -k --keepParent "build/Mac Remote.app" MacRemote-macos.zip
 
       - name: Artifact yükle
         uses: actions/upload-artifact@v4
         with:
-          name: MacKumanda-macos
-          path: MacKumanda-macos.zip
+          name: MacRemote-macos
+          path: MacRemote-macos.zip
 
       - name: Release oluştur (v* etiketinde)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: MacKumanda-macos.zip
+          files: MacRemote-macos.zip

@@ -2,10 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>Mac Kumanda</string>
-    <key>CFBundleDisplayName</key><string>Mac Kumanda</string>
+    <key>CFBundleName</key><string>Mac Remote</string>
+    <key>CFBundleDisplayName</key><string>Mac Remote</string>
     <key>CFBundleIdentifier</key><string>com.example.kumandamac</string>
-    <key>CFBundleExecutable</key><string>MacKumanda</string>
+    <key>CFBundleExecutable</key><string>MacRemote</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>

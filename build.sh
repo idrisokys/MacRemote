@@ -1,16 +1,16 @@
 #!/bin/bash
-# Evrensel (Apple Silicon + Intel) "Mac Kumanda.app" üretir.
+# Evrensel (Apple Silicon + Intel) "Mac Remote.app" üretir.
 # Gerekli: Xcode Command Line Tools (xcode-select --install)
 set -euo pipefail
-APP="build/Mac Kumanda.app"
+APP="build/Mac Remote.app"
 
 rm -rf build
 mkdir -p "$APP/Contents/MacOS"
 
-swiftc -O -target arm64-apple-macos12  MacKumanda.swift -o build/MacKumanda-arm64
-swiftc -O -target x86_64-apple-macos12 MacKumanda.swift -o build/MacKumanda-x86_64
-lipo -create -output "$APP/Contents/MacOS/MacKumanda" build/MacKumanda-arm64 build/MacKumanda-x86_64
-rm build/MacKumanda-arm64 build/MacKumanda-x86_64
+swiftc -O -target arm64-apple-macos12  MacRemote.swift -o build/MacRemote-arm64
+swiftc -O -target x86_64-apple-macos12 MacRemote.swift -o build/MacRemote-x86_64
+lipo -create -output "$APP/Contents/MacOS/MacRemote" build/MacRemote-arm64 build/MacRemote-x86_64
+rm build/MacRemote-arm64 build/MacRemote-x86_64
 
 cp Info.plist "$APP/Contents/Info.plist"
 
