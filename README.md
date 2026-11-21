@@ -48,10 +48,10 @@ Uygulama **ikon modunda** çalışır: Dock'ta görünmez, yalnızca menü çubu
 
 Atama modundayken kumandadaki tuşlar atamalarını çalıştırmaz, böylece kutuları doldururken yanlışlıkla işlem tetiklenmez.
 
-## Profiller (2 profil, tek basışla geçiş)
-**Atamayı başlat** düğmesinin sağındaki **Profil tuşu** düğmesine tıklayıp kumandada bir tuşa basarak profil tuşunu seç (yanındaki ✕ ile kaldırılır). O tuşa **her basışta** sıradaki profile geçilir: Profil 1 → Profil 2 → Profil 1. Geçişte kısa bir "pop" sesi çalar; aktif profil pencerede "Aktif profil" satırında yazar.
+## Profiller (3 profil, tek basışla geçiş)
+**Atamayı başlat** düğmesinin sağındaki **Profil tuşu** düğmesine tıklayıp kumandada bir tuşa basarak profil tuşunu seç (yanındaki ✕ ile kaldırılır). O tuşa **her basışta** sıradaki profile geçilir: Profil 1 → Profil 2 → Profil 3 → Profil 1. Geçişte kısa bir "pop" sesi çalar; aktif profil pencerede "Aktif profil" satırında yazar.
 
-- **Profil 1 / Profil 2** seçiciyle düzenlediğin profili değiştirirsin. **Atamayı başlat** modunda kumandada bastığın tuşlar seçili profile eklenir.
+- **Profil 1 / Profil 2 / Profil 3** seçiciyle düzenlediğin profili değiştirirsin. **Atamayı başlat** modunda kumandada bastığın tuşlar seçili profile eklenir.
 - Profil tuşu yalnızca profil değiştirir, ona ayrıca eylem atanmaz.
 
 ## Fare modu

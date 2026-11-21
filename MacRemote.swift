@@ -534,8 +534,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var assigning = false
     var editLayer = 0
     var layerKey: String? = UserDefaults.standard.string(forKey: "layerKey")
-    var profile = 0                      // 0, 1 -> Profil 1, 2
-    let profileCount = 2
+    var profile = 0                      // 0, 1, 2 -> Profil 1, 2, 3
+    let profileCount = 3
     var pickingLayer = false
     var lastProfileSwitch = Date.distantPast
     var lastHide = Date.distantPast
@@ -544,7 +544,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let profLbl = NSTextField(labelWithString: L("Aktif profil: Profil 1", "Active profile: Profile 1"))
     let layerBtn = NSButton(title: L("Profil tuşu: Seç…", "Profile key: Choose…"), target: nil, action: nil)
     let layerClear = NSButton(title: "✕", target: nil, action: nil)
-    let seg = NSSegmentedControl(labels: [L("Profil 1", "Profile 1"), L("Profil 2", "Profile 2")], trackingMode: .selectOne, target: nil, action: nil)
+    let seg = NSSegmentedControl(labels: [L("Profil 1", "Profile 1"), L("Profil 2", "Profile 2"), L("Profil 3", "Profile 3")], trackingMode: .selectOne, target: nil, action: nil)
     let assignBtn = NSButton(title: L("▶︎ Atamayı başlat", "▶︎ Start assigning"), target: nil, action: nil)
     let popup = NSPopUpButton(frame: .zero, pullsDown: false)
     var devices: [String] = []
@@ -918,7 +918,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        // Profil tuşu: her basışta sıradaki profile geçer (Profil 1 → 2 → 1)
+        // Profil tuşu: her basışta sıradaki profile geçer (Profil 1 → 2 → 3 → 1)
         if base == layerKey {
             guard down else { return }
             let now = Date()
