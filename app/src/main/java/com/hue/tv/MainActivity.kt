@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import kotlin.random.Random
 import android.widget.*
 import java.util.UUID
@@ -33,6 +34,12 @@ class MainActivity : Activity() {
     private val chars = HashMap<UUID, BluetoothGattCharacteristic>()
     private val queue = ArrayDeque<Pair<UUID, ByteArray>>()
     private var busy = false
+    private var failCount = 0
+    private var lastWriteAt = 0L
+    private var isOn = false      // lambaya güç komutu gönderildi mi
+    private var sentBri = -1      // lambaya son gönderilen parlaklık
+    private var lastLabel = ""
+    private val gapMs = 150L      // iki yazma arası minimum süre (renk hızı sınırı)
     private var bri = 254
     private var scanning = false
     private val seen = HashSet<String>()
@@ -87,6 +94,11 @@ class MainActivity : Activity() {
             setOnClickListener { onClick() }
         }
 
+    private fun addStatus(parent: LinearLayout, lp: LinearLayout.LayoutParams? = null) {
+        (status.parent as? android.view.ViewGroup)?.removeView(status)
+        if (lp != null) parent.addView(status, lp) else parent.addView(status)
+    }
+
     private fun ui(msg: String) = runOnUiThread { status.text = msg }
 
     // ---------- Scan ----------
@@ -114,7 +126,7 @@ class MainActivity : Activity() {
         root.removeAllViews()
         root.addView(text("Hue ışığını seç", 32f))
         root.addView(text("Işığın pairing modunda olması gerekir (fabrika reseti / Hue uygulamasından silinmiş). ★ işaretliler Hue.", 18f))
-        root.addView(status); status.text = "Taranıyor..."
+        addStatus(root); status.text = "Taranıyor..."
         adapter()?.bluetoothLeScanner?.startScan(scanCb); scanning = true
     }
 
@@ -127,8 +139,8 @@ class MainActivity : Activity() {
     }
 
     private fun connect(addr: String) {
-        root.removeAllViews(); root.addView(text("Bağlanılıyor...", 28f)); root.addView(status)
-        chars.clear(); queue.clear(); busy = false
+        root.removeAllViews(); root.addView(text("Bağlanılıyor...", 28f)); addStatus(root)
+        chars.clear(); resetWriteState()
         gatt?.close(); gatt = null
         unregisterBond()
         val dev = adapter()!!.getRemoteDevice(addr)
@@ -164,7 +176,7 @@ class MainActivity : Activity() {
                 ui("Bağlandı, servisler aranıyor...")
                 handler.postDelayed({ g.discoverServices() }, 600)
             } else runOnUiThread {
-                g.close(); gatt = null; prefs.edit().remove("addr").apply()
+                g.close(); gatt = null; resetWriteState(); prefs.edit().remove("addr").apply()
                 showScan(); status.text = "Bağlantı kesildi (kod $st). Tekrar seçin."
             }
         }
@@ -182,24 +194,59 @@ class MainActivity : Activity() {
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, st: Int) {
-            busy = false
+            handler.removeCallbacks(watchdog)
+            synchronized(queue) { busy = false }
             when (st) {
-                BluetoothGatt.GATT_SUCCESS -> ui("Gönderildi")
-                5, 15 -> { ui("Eşleşme gerekiyor ($st), eşleşiliyor... onay çıkarsa kabul edin"); g.device.createBond() }
+                BluetoothGatt.GATT_SUCCESS -> { failCount = 0; ui(if (lastLabel.isEmpty()) "Gönderildi" else "✓ Gönderildi · $lastLabel") }
+                5, 15 -> { isOn = false; sentBri = -1; ui("Eşleşme gerekiyor ($st), eşleşiliyor... onay çıkarsa kabul edin"); g.device.createBond() }
                 else -> ui("Yazma hatası ($st)")
             }
             pump()
         }
     }
 
-    private fun write(id: UUID, b: ByteArray) { synchronized(queue) { queue.addLast(id to b) }; pump() }
+    private fun resetWriteState() {
+        handler.removeCallbacks(watchdog); handler.removeCallbacks(pumpRun)
+        synchronized(queue) { queue.clear(); busy = false }
+        failCount = 0; isOn = false; sentBri = -1
+    }
+
+    // Yanıt gelmezse kuyruk sonsuza kadar kilitlenmesin
+    private val watchdog = Runnable {
+        synchronized(queue) { busy = false }
+        ui("Lamba yanıt vermedi, devam ediliyor")
+        pump()
+    }
+    private val pumpRun = Runnable { pump() }
+
+    private fun write(id: UUID, b: ByteArray) {
+        synchronized(queue) {
+            // Renk ve parlaklıkta sadece en son değer önemli: eskileri at (kuyruk şişmesin)
+            if (id == COLOR || id == BRI) queue.removeAll { it.first == id }
+            queue.addLast(id to b)
+        }
+        pump()
+    }
 
     private fun pump() {
         synchronized(queue) {
             if (busy || queue.isEmpty()) return
-            val (id, b) = queue.removeFirst()
-            val c = chars[id] ?: run { ui("Özellik bulunamadı: ${id.toString().take(8)}"); return }
-            @Suppress("DEPRECATION") run { c.value = b; busy = gatt?.writeCharacteristic(c) ?: false }
+            val wait = lastWriteAt + gapMs - SystemClock.uptimeMillis()
+            if (wait > 0) { handler.removeCallbacks(pumpRun); handler.postDelayed(pumpRun, wait); return }
+            val item = queue.removeFirst()
+            val c = chars[item.first]
+            val g = gatt
+            if (c == null || g == null) { ui("Özellik bulunamadı: ${item.first.toString().take(8)}"); return }
+            busy = true                       // ÖNCE işaretle: callback çok hızlı gelirse yarışma olmasın
+            lastWriteAt = SystemClock.uptimeMillis()
+            @Suppress("DEPRECATION") val ok = run { c.value = item.second; g.writeCharacteristic(c) }
+            if (ok) {
+                handler.removeCallbacks(watchdog); handler.postDelayed(watchdog, 2500)
+            } else {
+                busy = false
+                if (++failCount <= 5) { queue.addFirst(item); handler.removeCallbacks(pumpRun); handler.postDelayed(pumpRun, 300) }
+                else { failCount = 0; ui("Yazma başlatılamadı, atlandı") }
+            }
         }
     }
 
@@ -214,34 +261,33 @@ class MainActivity : Activity() {
         val Y = r * 0.283881 + g * 0.668433 + b * 0.047685
         val Z = r * 0.000088 + g * 0.072310 + b * 0.986039
         val sum = X + Y + Z
-        write(POWER, byteArrayOf(1))
+        if (!isOn) { write(POWER, byteArrayOf(1)); isOn = true }
         write(COLOR, (u16(X / sum) + u16(Y / sum)).toByteArray())
-        write(BRI, byteArrayOf(b2.toByte()))
+        if (sentBri != b2) { write(BRI, byteArrayOf(b2.toByte())); sentBri = b2 }
     }
 
     private val handler = Handler(Looper.getMainLooper())
 
-    // En sevilen 50 renk (YouGov, Crayola ve diğer anketlere göre; mavi tonları başta)
+    // Ressamların en sevdiği 45 renk (klasik sanatçı pigmentleri); satırda 15
     private val palette = listOf(
-        "Mavi" to "#1565FF", "Gök Mavisi" to "#87CEEB", "Serulyen" to "#2A7FBA", "Kızılgerdan Yumurtası" to "#1FCECB",
-        "Wisteria" to "#C9A0DC", "Koyu Teal" to "#008080", "Yeşil" to "#00A651", "Mor" to "#7B2FF7",
-        "Kırmızı" to "#FF0000", "Pembe" to "#FF69B4", "Pastel Pembe" to "#FDDDE6", "Turuncu" to "#FF7F00",
-        "Sarı" to "#FFD700", "Lacivert" to "#1B2A6B", "Turkuaz" to "#40E0D0", "Lavanta" to "#B57EDC",
-        "Mercan" to "#FF7F50", "Adaçayı" to "#9CAF88", "Zümrüt" to "#50C878", "Nane" to "#98FF98",
-        "Gül" to "#FF007F", "Orkide" to "#DA70D6", "Magenta" to "#FF00FF", "Camgöbeği" to "#00FFFF",
-        "Kraliyet Mavisi" to "#4169E1", "Kot Mavisi" to "#3F6FB5", "Buz Mavisi" to "#B0E0E6", "Okyanus" to "#00B4D8",
-        "Limon Yeşili" to "#A4DE02", "Orman Yeşili" to "#228B22", "Antep Fıstığı" to "#93C572", "Şeftali" to "#FFCBA4",
-        "Somon" to "#FA8072", "Kehribar" to "#FFBF00", "Hardal" to "#E1AD01", "Kızıl" to "#DC143C",
-        "Toz Gül" to "#D8869A", "Fuşya" to "#FF1493", "Menekşe" to "#8F00FF", "İndigo" to "#5D3FD3",
-        "Erik" to "#B05AC0", "Lila" to "#C8A2C8", "Gün Batımı" to "#FF5E3A", "Mandalina" to "#FF9966",
-        "Kayısı" to "#FBCEB1", "Sıcak Beyaz" to "#FFC58F", "Beyaz" to "#FFFFFF", "Soğuk Beyaz" to "#C9E2FF",
-        "Çam Yeşili" to "#1FA088", "Azur" to "#007FFF"
+        // 1. satır: mavi - yeşil
+        "Ultramarin Mavi" to "#2A3BE0", "Kobalt Mavisi" to "#0047AB", "Serulyen Mavisi" to "#2A7FBA", "Prusya Mavisi" to "#1B5E8C", "Gök Mavisi" to "#87CEEB",
+        "Kraliyet Mavisi" to "#4169E1", "Azur" to "#007FFF", "Turkuaz" to "#30D5C8", "Viridian" to "#40826D", "Zümrüt Yeşili" to "#50C878",
+        "Yaprak Yeşili" to "#3CB043", "Sap Yeşili" to "#4F7942", "Zeytin Yeşili" to "#6B8E23", "Çam Yeşili" to "#01796F", "Adaçayı" to "#9CAF88",
+        // 2. satır: sarı - turuncu - kırmızı
+        "Limon Sarısı" to "#FFF44F", "Kadmiyum Sarısı" to "#FFE600", "Napoli Sarısı" to "#FADA5E", "Altın Sarısı" to "#FFD700", "Hint Sarısı" to "#E3A857",
+        "Sarı Oker" to "#CC7722", "Kehribar" to "#FFBF00", "Kadmiyum Turuncusu" to "#ED872D", "Mandalina" to "#FF9966", "Yanık Siena" to "#E97451",
+        "Vermilyon" to "#E34234", "Kadmiyum Kırmızısı" to "#E30022", "Alizarin Kırmızısı" to "#E32636", "Karmin" to "#C41E3A", "Venedik Kırmızısı" to "#C80815",
+        // 3. satır: pembe - mor - beyaz tonları
+        "Madder Gülü" to "#E8527A", "Kinakridon Magenta" to "#D6338A", "Fuşya" to "#FF1493", "Gül Kurusu" to "#D8869A", "Menekşe Moru" to "#8F00FF",
+        "İndigo" to "#5D3FD3", "Mangan Moru" to "#9966CC", "Lavanta" to "#B57EDC", "Eflatun" to "#E0B0FF", "Erik" to "#B05AC0",
+        "Şeftali" to "#FFCBA4", "Sıcak Beyaz" to "#FFC58F", "Titanyum Beyazı" to "#FFFFFF", "Soğuk Beyaz" to "#C9E2FF", "Ham Siena" to "#B5651D"
     )
 
     private fun favs(): MutableList<Int> =
-        (prefs.getString("favs", "") ?: "").split(",").mapNotNull { it.toIntOrNull() }.toMutableList()
+        (prefs.getString("favs45", "") ?: "").split(",").mapNotNull { it.toIntOrNull() }.toMutableList()
 
-    private fun saveFavs(l: List<Int>) = prefs.edit().putString("favs", l.joinToString(",")).apply()
+    private fun saveFavs(l: List<Int>) = prefs.edit().putString("favs45", l.joinToString(",")).apply()
 
     private fun cell(idx: Int, size: Int, onLong: () -> Unit): LinearLayout {
         val (name, hex) = palette[idx]
@@ -250,20 +296,23 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL; gravity = android.view.Gravity.CENTER_HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(size, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
         }
-        val b = button("", col, w = size - 16, h = size - 40) { setRgb(col); ui("${idx + 1} · $name") }
+        val b = button("", col, w = size - 16, h = size - 16) { lastLabel = name; setRgb(col); ui(lastLabel) }
         b.setOnLongClickListener { onLong(); true }
         box.addView(b)
-        box.addView(TextView(this).apply { text = "${idx + 1}"; textSize = 14f; setTextColor(Color.WHITE); gravity = android.view.Gravity.CENTER })
         return box
     }
 
     private fun showPicker() {
         root.removeAllViews()
-        val cols = 10
+        val cols = 15
         val size = (resources.displayMetrics.widthPixels - 160) / cols
 
         // 1) Favoriler (en üstte)
-        root.addView(text("Favoriler  (renge uzun basarak ekle / çıkar)", 20f))
+        val head = LinearLayout(this).apply { gravity = android.view.Gravity.CENTER_VERTICAL }
+        head.addView(text("Favoriler  (renge uzun basarak ekle / çıkar)", 20f))
+        addStatus(head, LinearLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = 48 })
+        root.addView(head)
         val favRow = LinearLayout(this)
         root.addView(favRow)
         fun refreshFavs() {
@@ -271,30 +320,28 @@ class MainActivity : Activity() {
             val f = favs()
             if (f.isEmpty()) favRow.addView(text("Henüz favori yok", 16f).apply { setTextColor(Color.GRAY) })
             for (idx in f) favRow.addView(cell(idx, size) {
-                val l = favs(); l.remove(idx); saveFavs(l); refreshFavs(); ui("Favoriden çıkarıldı: ${idx + 1}")
+                val l = favs(); l.remove(idx); saveFavs(l); refreshFavs(); ui("Favoriden çıkarıldı: ${palette[idx].first}")
             })
         }
         refreshFavs()
 
-        // 2) Parlaklık
-        root.addView(text("Parlaklık", 20f))
+        // 2) Parlaklık (başlıksız)
         val row = LinearLayout(this)
         for (pct in 10..100 step 10) row.addView(button("%$pct", Color.DKGRAY, w = size - 16) {
-            bri = (pct * 254 / 100).coerceAtLeast(1); write(BRI, byteArrayOf(bri.toByte()))
+            bri = (pct * 254 / 100).coerceAtLeast(1); sentBri = bri; write(BRI, byteArrayOf(bri.toByte()))
         })
         root.addView(row)
 
-        // 3) 50 renk, satırda 10
+        // 3) 45 renk, satırda 15
         root.addView(text("Renkler", 20f))
         val grid = android.widget.GridLayout(this).apply { columnCount = cols }
         for (i in palette.indices) grid.addView(cell(i, size) {
             val l = favs()
-            if (l.contains(i)) { l.remove(i); saveFavs(l); refreshFavs(); ui("Favoriden çıkarıldı: ${i + 1}") }
+            if (l.contains(i)) { l.remove(i); saveFavs(l); refreshFavs(); ui("Favoriden çıkarıldı: ${palette[i].first}") }
             else if (l.size >= cols) ui("Favori satırı dolu (en fazla $cols)")
-            else { l.add(i); saveFavs(l); refreshFavs(); ui("Favorilere eklendi: ${i + 1}") }
+            else { l.add(i); saveFavs(l); refreshFavs(); ui("Favorilere eklendi: ${palette[i].first}") }
         })
         root.addView(grid)
-        root.addView(status)
     }
 
     override fun onDestroy() { unregisterBond(); stopScan(); gatt?.close(); super.onDestroy() }
