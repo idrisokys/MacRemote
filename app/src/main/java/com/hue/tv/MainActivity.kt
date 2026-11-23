@@ -77,6 +77,7 @@ class MainActivity : Activity() {
     private fun button(label: String, bg: Int, fg: Int = Color.WHITE, w: Int = 150, h: Int = 90, onClick: () -> Unit) =
         Button(this).apply {
             text = label; setTextColor(fg); isFocusable = true
+            minWidth = 0; minHeight = 0; minimumWidth = 0; minimumHeight = 0; setPadding(0, 0, 0, 0)
             val d = GradientDrawable().apply { setColor(bg); cornerRadius = 16f }
             val f = GradientDrawable().apply { setColor(bg); cornerRadius = 16f; setStroke(8, Color.WHITE) }
             background = StateListDrawable().apply {
@@ -175,9 +176,9 @@ class MainActivity : Activity() {
                 runOnUiThread { prefs.edit().remove("addr").apply(); showScan(); status.text = "Hue servisi yok. Bulunan servisler:\n$list" }
                 return
             }
-            for (id in listOf(POWER, BRI, TEMP, COLOR)) s.getCharacteristic(id)?.let { chars[id] = it }
+            for (id in listOf(POWER, BRI, COLOR)) s.getCharacteristic(id)?.let { chars[id] = it }
             prefs.edit().putString("addr", g.device.address).apply()
-            runOnUiThread { showPicker(); status.text = "Bağlı · ${chars.size}/4 özellik bulundu" }
+            runOnUiThread { showPicker(); status.text = "Bağlı · ${chars.size}/3 özellik bulundu" }
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, st: Int) {
@@ -218,79 +219,36 @@ class MainActivity : Activity() {
         write(BRI, byteArrayOf(b2.toByte()))
     }
 
-    private fun setWhite(mired: Int) {
-        write(POWER, byteArrayOf(1))
-        write(TEMP, byteArrayOf((mired and 0xFF).toByte(), (mired shr 8).toByte()))
-        write(BRI, byteArrayOf(bri.toByte()))
-    }
-
-
-    // ---------- Effects (uygulama tarafında) ----------
     private val handler = Handler(Looper.getMainLooper())
-    private var effect: Runnable? = null
-    private var step = 0
 
-    private fun stopEffect() { effect?.let { handler.removeCallbacks(it) }; effect = null }
-
-    private fun hsv(h: Float, s: Float, v: Float = 1f) = Color.HSVToColor(floatArrayOf((h % 360f + 360f) % 360f, s, v))
-
-    private fun runEffect(delayMs: Long, next: () -> Pair<Int, Int>) {
-        stopEffect(); step = 0
-        val r = object : Runnable {
-            override fun run() { val (c, b) = next(); setRgb(c, b); step++; handler.postDelayed(this, delayMs) }
-        }
-        effect = r; handler.post(r)
-    }
-
-    private fun effectsRow(): LinearLayout {
-        val row = LinearLayout(this)
-        row.addView(button("Mum", Color.parseColor("#E65100"), w = 170) {
-            runEffect(600) { hsv(28f + Random.nextFloat() * 10f, 0.9f) to Random.nextInt(100, 221) } })
-        row.addView(button("Şömine", Color.parseColor("#BF360C"), w = 170) {
-            runEffect(500) { hsv(5f + Random.nextFloat() * 30f, 1f) to Random.nextInt(120, 255) } })
-        row.addView(button("Döngü", Color.parseColor("#6A1B9A"), w = 170) {
-            runEffect(1000) { hsv(step * 15f, 1f) to bri } })
-        row.addView(button("Okyanus", Color.parseColor("#0277BD"), w = 170) {
-            runEffect(1500) { hsv(180f + Random.nextFloat() * 60f, 0.8f + Random.nextFloat() * 0.2f) to bri } })
-        row.addView(button("Aurora", Color.parseColor("#2E7D32"), w = 170) {
-            runEffect(2000) { (if (Random.nextBoolean()) hsv(110f + Random.nextFloat() * 60f, 1f) else hsv(260f + Random.nextFloat() * 40f, 0.9f)) to bri } })
-        row.addView(button("Kıvılcım", Color.parseColor("#F9A825"), Color.BLACK, 170) {
-            runEffect(800) { hsv(Random.nextFloat() * 360f, 0.5f + Random.nextFloat() * 0.5f) to Random.nextInt(150, 255) } })
-        row.addView(button("Durdur", Color.DKGRAY, w = 170) { stopEffect() })
-        return row
-    }
+    private fun hsv(h: Float, sat: Float) = Color.HSVToColor(floatArrayOf(h, sat, 1f))
 
     private fun showPicker() {
         root.removeAllViews()
-        root.addView(text("Hue Renk Seç", 32f))
-        val hsv = FloatArray(3)
-        for (sat in floatArrayOf(1f, 0.6f, 0.3f)) {
-            val row = LinearLayout(this)
-            for (h in 0 until 360 step 30) {
-                hsv[0] = h.toFloat(); hsv[1] = sat; hsv[2] = 1f
-                val col = Color.HSVToColor(hsv)
-                row.addView(button("", col, h = 90, w = 120) { stopEffect(); setRgb(col) })
-            }
-            root.addView(HorizontalScrollView(this).apply { addView(row) })
+        val colors = ArrayList<Int>()
+        for (sat in floatArrayOf(1f, 0.65f, 0.35f)) for (h in 0 until 360 step 10) colors.add(hsv(h.toFloat(), sat))
+        colors.addAll(listOf(Color.WHITE, Color.rgb(255, 197, 143), Color.rgb(201, 226, 255),
+            Color.rgb(255, 105, 180), Color.rgb(255, 140, 0), Color.rgb(0, 128, 128)))
+        val cols = 12
+        val cell = (resources.displayMetrics.widthPixels - 160) / cols
+        val grid = android.widget.GridLayout(this).apply { columnCount = cols }
+        colors.forEachIndexed { i, col ->
+            val n = i + 1
+            val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = android.view.Gravity.CENTER_HORIZONTAL }
+            box.addView(button("", col, w = cell - 16, h = cell - 30) { setRgb(col); ui("Renk $n") })
+            box.addView(TextView(this).apply { text = "$n"; textSize = 14f; setTextColor(Color.WHITE); gravity = android.view.Gravity.CENTER })
+            grid.addView(box, android.widget.GridLayout.LayoutParams().apply { width = cell; height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT })
         }
-        val row2 = LinearLayout(this)
-        row2.addView(button("Sıcak Beyaz", Color.parseColor("#FFB46B"), Color.BLACK, 220) { stopEffect(); setWhite(400) })
-        row2.addView(button("Soğuk Beyaz", Color.parseColor("#CFE6FF"), Color.BLACK, 220) { stopEffect(); setWhite(200) })
-        row2.addView(button("Aç", Color.parseColor("#2E7D32")) { write(POWER, byteArrayOf(1)) })
-        row2.addView(button("Kapat", Color.parseColor("#C62828")) { stopEffect(); write(POWER, byteArrayOf(0)) })
-        root.addView(row2)
-        root.addView(text("Efektler", 20f))
-        root.addView(HorizontalScrollView(this).apply { addView(effectsRow()) })
+        root.addView(grid)
         root.addView(text("Parlaklık", 20f))
-        val row3 = LinearLayout(this)
-        for ((l, v) in listOf("%25" to 64, "%50" to 127, "%75" to 190, "%100" to 254))
-            row3.addView(button(l, Color.DKGRAY) { bri = v; write(BRI, byteArrayOf(v.toByte())) })
-        root.addView(row3)
-        root.addView(button("Başka Işık Seç", Color.parseColor("#37474F"), w = 300) {
-            stopEffect(); prefs.edit().remove("addr").apply(); gatt?.close(); showScan()
+        val bw = (resources.displayMetrics.widthPixels - 160) / 10 - 16
+        val row = LinearLayout(this)
+        for (pct in 10..100 step 10) row.addView(button("%$pct", Color.DKGRAY, w = bw) {
+            bri = (pct * 254 / 100).coerceAtLeast(1); write(BRI, byteArrayOf(bri.toByte()))
         })
+        root.addView(row)
         root.addView(status)
     }
 
-    override fun onDestroy() { unregisterBond(); stopEffect(); stopScan(); gatt?.close(); super.onDestroy() }
+    override fun onDestroy() { unregisterBond(); stopScan(); gatt?.close(); super.onDestroy() }
 }
