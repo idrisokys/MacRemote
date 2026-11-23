@@ -118,29 +118,77 @@ class MainActivity : Activity() {
     }
 
     // ---------- Connect ----------
+    private var bondRx: android.content.BroadcastReceiver? = null
+
+    private fun unregisterBond() {
+        bondRx?.let { try { unregisterReceiver(it) } catch (_: Exception) {} }
+        bondRx = null
+    }
+
     private fun connect(addr: String) {
         root.removeAllViews(); root.addView(text("Bağlanılıyor...", 28f)); root.addView(status)
         chars.clear(); queue.clear(); busy = false
-        gatt?.close()
+        gatt?.close(); gatt = null
+        unregisterBond()
         val dev = adapter()!!.getRemoteDevice(addr)
-        gatt = dev.connectGatt(this, false, object : BluetoothGattCallback() {
-            override fun onConnectionStateChange(g: BluetoothGatt, st: Int, ns: Int) {
-                if (ns == BluetoothProfile.STATE_CONNECTED) g.discoverServices()
-                else runOnUiThread { prefs.edit().remove("addr").apply(); showScan(); status.text = "Bağlantı kesildi. Tekrar seçin." }
+        if (dev.bondState == BluetoothDevice.BOND_BONDED) { openGatt(dev); return }
+        ui("Eşleşiliyor... TV'de onay çıkarsa kabul edin.")
+        var sawBonding = false
+        val rx = object : android.content.BroadcastReceiver() {
+            @Suppress("DEPRECATION")
+            override fun onReceive(c: android.content.Context, i: android.content.Intent) {
+                val d = i.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+                if (d?.address != addr) return
+                when (i.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1)) {
+                    BluetoothDevice.BOND_BONDING -> sawBonding = true
+                    BluetoothDevice.BOND_BONDED -> { unregisterBond(); openGatt(dev) }
+                    BluetoothDevice.BOND_NONE -> if (sawBonding) { unregisterBond(); ui("Eşleşme olmadı, eşleşmesiz deneniyor..."); openGatt(dev) }
+                }
             }
-            override fun onServicesDiscovered(g: BluetoothGatt, st: Int) {
-                val s = g.getService(SVC)
-                if (s == null) { runOnUiThread { prefs.edit().remove("addr").apply(); showScan(); status.text = "Bu cihaz Hue değil." }; return }
-                for (id in listOf(POWER, BRI, TEMP, COLOR)) s.getCharacteristic(id)?.let { chars[id] = it }
-                prefs.edit().putString("addr", addr).apply()
-                runOnUiThread { showPicker() }
+        }
+        bondRx = rx
+        registerReceiver(rx, android.content.IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED))
+        if (!dev.createBond()) { unregisterBond(); openGatt(dev) }
+        handler.postDelayed({ if (bondRx != null) { unregisterBond(); ui("Eşleşme zaman aşımı, deneniyor..."); openGatt(dev) } }, 20000)
+    }
+
+    private fun openGatt(dev: BluetoothDevice) {
+        if (gatt != null) return
+        gatt = dev.connectGatt(this, false, gattCb, BluetoothDevice.TRANSPORT_LE)
+    }
+
+    private val gattCb = object : BluetoothGattCallback() {
+        override fun onConnectionStateChange(g: BluetoothGatt, st: Int, ns: Int) {
+            if (ns == BluetoothProfile.STATE_CONNECTED) {
+                ui("Bağlandı, servisler aranıyor...")
+                handler.postDelayed({ g.discoverServices() }, 600)
+            } else runOnUiThread {
+                g.close(); gatt = null; prefs.edit().remove("addr").apply()
+                showScan(); status.text = "Bağlantı kesildi (kod $st). Tekrar seçin."
             }
-            override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, st: Int) {
-                busy = false
-                if (st != BluetoothGatt.GATT_SUCCESS) ui("Yazma hatası ($st) — ışık eşleşmeye açık mı?")
-                pump()
+        }
+
+        override fun onServicesDiscovered(g: BluetoothGatt, st: Int) {
+            val s = g.getService(SVC)
+            if (s == null) {
+                val list = g.services.joinToString("\n") { it.uuid.toString().take(8) }
+                runOnUiThread { prefs.edit().remove("addr").apply(); showScan(); status.text = "Hue servisi yok. Bulunan servisler:\n$list" }
+                return
             }
-        })
+            for (id in listOf(POWER, BRI, TEMP, COLOR)) s.getCharacteristic(id)?.let { chars[id] = it }
+            prefs.edit().putString("addr", g.device.address).apply()
+            runOnUiThread { showPicker(); status.text = "Bağlı · ${chars.size}/4 özellik bulundu" }
+        }
+
+        override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, st: Int) {
+            busy = false
+            when (st) {
+                BluetoothGatt.GATT_SUCCESS -> ui("Gönderildi")
+                5, 15 -> { ui("Eşleşme gerekiyor ($st), eşleşiliyor... onay çıkarsa kabul edin"); g.device.createBond() }
+                else -> ui("Yazma hatası ($st)")
+            }
+            pump()
+        }
     }
 
     private fun write(id: UUID, b: ByteArray) { synchronized(queue) { queue.addLast(id to b) }; pump() }
@@ -149,7 +197,7 @@ class MainActivity : Activity() {
         synchronized(queue) {
             if (busy || queue.isEmpty()) return
             val (id, b) = queue.removeFirst()
-            val c = chars[id] ?: return
+            val c = chars[id] ?: run { ui("Özellik bulunamadı: ${id.toString().take(8)}"); return }
             @Suppress("DEPRECATION") run { c.value = b; busy = gatt?.writeCharacteristic(c) ?: false }
         }
     }
@@ -244,5 +292,5 @@ class MainActivity : Activity() {
         root.addView(status)
     }
 
-    override fun onDestroy() { stopEffect(); stopScan(); gatt?.close(); super.onDestroy() }
+    override fun onDestroy() { unregisterBond(); stopEffect(); stopScan(); gatt?.close(); super.onDestroy() }
 }
