@@ -1,14 +1,5 @@
-# Derleme çıktısı
 build/
-MacRemote-macos.zip
-*.o
-*.dSYM/
-.build/
-
-# macOS
-.DS_Store
-
-# Xcode
-xcuserdata/
-DerivedData/
-*.xcuserstate
+.gradle/
+local.properties
+*.iml
+.idea/
