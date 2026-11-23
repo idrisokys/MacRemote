@@ -221,32 +221,79 @@ class MainActivity : Activity() {
 
     private val handler = Handler(Looper.getMainLooper())
 
-    private fun hsv(h: Float, sat: Float) = Color.HSVToColor(floatArrayOf(h, sat, 1f))
+    // En sevilen 50 renk (YouGov, Crayola ve diğer anketlere göre; mavi tonları başta)
+    private val palette = listOf(
+        "Mavi" to "#1565FF", "Gök Mavisi" to "#87CEEB", "Serulyen" to "#2A7FBA", "Kızılgerdan Yumurtası" to "#1FCECB",
+        "Wisteria" to "#C9A0DC", "Koyu Teal" to "#008080", "Yeşil" to "#00A651", "Mor" to "#7B2FF7",
+        "Kırmızı" to "#FF0000", "Pembe" to "#FF69B4", "Pastel Pembe" to "#FDDDE6", "Turuncu" to "#FF7F00",
+        "Sarı" to "#FFD700", "Lacivert" to "#1B2A6B", "Turkuaz" to "#40E0D0", "Lavanta" to "#B57EDC",
+        "Mercan" to "#FF7F50", "Adaçayı" to "#9CAF88", "Zümrüt" to "#50C878", "Nane" to "#98FF98",
+        "Gül" to "#FF007F", "Orkide" to "#DA70D6", "Magenta" to "#FF00FF", "Camgöbeği" to "#00FFFF",
+        "Kraliyet Mavisi" to "#4169E1", "Kot Mavisi" to "#3F6FB5", "Buz Mavisi" to "#B0E0E6", "Okyanus" to "#00B4D8",
+        "Limon Yeşili" to "#A4DE02", "Orman Yeşili" to "#228B22", "Antep Fıstığı" to "#93C572", "Şeftali" to "#FFCBA4",
+        "Somon" to "#FA8072", "Kehribar" to "#FFBF00", "Hardal" to "#E1AD01", "Kızıl" to "#DC143C",
+        "Toz Gül" to "#D8869A", "Fuşya" to "#FF1493", "Menekşe" to "#8F00FF", "İndigo" to "#5D3FD3",
+        "Erik" to "#B05AC0", "Lila" to "#C8A2C8", "Gün Batımı" to "#FF5E3A", "Mandalina" to "#FF9966",
+        "Kayısı" to "#FBCEB1", "Sıcak Beyaz" to "#FFC58F", "Beyaz" to "#FFFFFF", "Soğuk Beyaz" to "#C9E2FF",
+        "Çam Yeşili" to "#1FA088", "Azur" to "#007FFF"
+    )
+
+    private fun favs(): MutableList<Int> =
+        (prefs.getString("favs", "") ?: "").split(",").mapNotNull { it.toIntOrNull() }.toMutableList()
+
+    private fun saveFavs(l: List<Int>) = prefs.edit().putString("favs", l.joinToString(",")).apply()
+
+    private fun cell(idx: Int, size: Int, onLong: () -> Unit): LinearLayout {
+        val (name, hex) = palette[idx]
+        val col = Color.parseColor(hex)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = android.view.Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(size, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        val b = button("", col, w = size - 16, h = size - 40) { setRgb(col); ui("${idx + 1} · $name") }
+        b.setOnLongClickListener { onLong(); true }
+        box.addView(b)
+        box.addView(TextView(this).apply { text = "${idx + 1}"; textSize = 14f; setTextColor(Color.WHITE); gravity = android.view.Gravity.CENTER })
+        return box
+    }
 
     private fun showPicker() {
         root.removeAllViews()
-        val colors = ArrayList<Int>()
-        for (sat in floatArrayOf(1f, 0.65f, 0.35f)) for (h in 0 until 360 step 10) colors.add(hsv(h.toFloat(), sat))
-        colors.addAll(listOf(Color.WHITE, Color.rgb(255, 197, 143), Color.rgb(201, 226, 255),
-            Color.rgb(255, 105, 180), Color.rgb(255, 140, 0), Color.rgb(0, 128, 128)))
-        val cols = 12
-        val cell = (resources.displayMetrics.widthPixels - 160) / cols
-        val grid = android.widget.GridLayout(this).apply { columnCount = cols }
-        colors.forEachIndexed { i, col ->
-            val n = i + 1
-            val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = android.view.Gravity.CENTER_HORIZONTAL }
-            box.addView(button("", col, w = cell - 16, h = cell - 30) { setRgb(col); ui("Renk $n") })
-            box.addView(TextView(this).apply { text = "$n"; textSize = 14f; setTextColor(Color.WHITE); gravity = android.view.Gravity.CENTER })
-            grid.addView(box, android.widget.GridLayout.LayoutParams().apply { width = cell; height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT })
+        val cols = 10
+        val size = (resources.displayMetrics.widthPixels - 160) / cols
+
+        // 1) Favoriler (en üstte)
+        root.addView(text("Favoriler  (renge uzun basarak ekle / çıkar)", 20f))
+        val favRow = LinearLayout(this)
+        root.addView(favRow)
+        fun refreshFavs() {
+            favRow.removeAllViews()
+            val f = favs()
+            if (f.isEmpty()) favRow.addView(text("Henüz favori yok", 16f).apply { setTextColor(Color.GRAY) })
+            for (idx in f) favRow.addView(cell(idx, size) {
+                val l = favs(); l.remove(idx); saveFavs(l); refreshFavs(); ui("Favoriden çıkarıldı: ${idx + 1}")
+            })
         }
-        root.addView(grid)
+        refreshFavs()
+
+        // 2) Parlaklık
         root.addView(text("Parlaklık", 20f))
-        val bw = (resources.displayMetrics.widthPixels - 160) / 10 - 16
         val row = LinearLayout(this)
-        for (pct in 10..100 step 10) row.addView(button("%$pct", Color.DKGRAY, w = bw) {
+        for (pct in 10..100 step 10) row.addView(button("%$pct", Color.DKGRAY, w = size - 16) {
             bri = (pct * 254 / 100).coerceAtLeast(1); write(BRI, byteArrayOf(bri.toByte()))
         })
         root.addView(row)
+
+        // 3) 50 renk, satırda 10
+        root.addView(text("Renkler", 20f))
+        val grid = android.widget.GridLayout(this).apply { columnCount = cols }
+        for (i in palette.indices) grid.addView(cell(i, size) {
+            val l = favs()
+            if (l.contains(i)) { l.remove(i); saveFavs(l); refreshFavs(); ui("Favoriden çıkarıldı: ${i + 1}") }
+            else if (l.size >= cols) ui("Favori satırı dolu (en fazla $cols)")
+            else { l.add(i); saveFavs(l); refreshFavs(); ui("Favorilere eklendi: ${i + 1}") }
+        })
+        root.addView(grid)
         root.addView(status)
     }
 
